@@ -1,0 +1,27 @@
+[package]
+name = "medulla"
+version = "0.1.0"
+edition = "2021"
+description = "A git-native, AI-accessible knowledge engine for software projects"
+license = "MIT"
+repository = "https://github.com/jordanstella/medulla"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# CRDT
+loro = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+
+[profile.release]
+lto = true
+strip = true
