@@ -103,6 +103,10 @@ impl LoroStore {
             entity_map.insert("context", context.clone())?;
         }
 
+        if let Some(ref superseded_by) = decision.superseded_by {
+            entity_map.insert("superseded_by", superseded_by.clone())?;
+        }
+
         // Store tags as LoroList
         let tags_list = entity_map.get_or_create_container("tags", loro::LoroList::new())?;
         for tag in &decision.base.tags {
