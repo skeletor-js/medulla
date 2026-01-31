@@ -2,5 +2,8 @@
 /target/
 Cargo.lock
 
+# macOS
+.DS_Store
+
 # Medulla local data
 .medulla/cache.db
