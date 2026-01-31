@@ -902,23 +902,30 @@ medulla add decision "Use Postgres" --edit  # Opens $EDITOR with template
 
 ## Implementation Roadmap
 
-### Phase 1: Core Engine
+### Phase 1: Core Engine ✓ COMPLETE
 
 - [x] Scaffold Rust project (cargo workspace, dependencies, module structure)
 - [x] Loro CRDT storage layer with nested-by-type structure
-- [x] Entity model with built-in types (decision only — task, note, prompt, component, link coming later)
-- [ ] Relation storage in separate collection with composite keys
+- [x] Entity model with all built-in types:
+  - [x] Decision (status, context, consequences, superseded_by)
+  - [x] Task (status, priority, due_date, assignee)
+  - [x] Note (note_type)
+  - [x] Prompt (template, variables, output_schema)
+  - [x] Component (component_type, status, owner)
+  - [x] Link (url, link_type)
+- [x] Relation storage in separate collection with composite keys
 - [x] Hybrid ID system (UUID + sequence numbers, prefix matching)
-- [ ] SQLite cache with version tracking for incremental sync
-- [x] Basic CLI commands:
+- [x] SQLite cache with version tracking for incremental sync
+- [x] Full CLI commands for all entity types:
   - [x] `init` with `--yes`/`--no` flags (y/n prompts deferred to Phase 4)
-  - [x] `add` with `--stdin` flag (`--relation` and `--edit` show warnings, deferred)
+  - [x] `add` with `--stdin` flag and `--relation` support (`--edit` deferred to Phase 4)
   - [x] `list`, `get` (accept sequence number or UUID prefix)
-  - [ ] `update`, `delete`
+  - [x] `update`, `delete`
+  - [x] `search` (full-text search via SQLite FTS5)
 - [x] JSON output mode (`--json`)
 - [x] Human-readable output with `003 (a1b2c3d)` ID format
 
-**Phase 1 Progress:** Vertical slice complete (init, add decision, list, get). 9 commits, 4 unit tests + 5 integration tests passing. Release binary: 3.1MB.
+**Phase 1 Complete:** Full implementation with 21 unit tests + 11 integration tests passing (32 total).
 
 ### Phase 2: MCP Server
 
@@ -932,7 +939,7 @@ medulla add decision "Use Postgres" --edit  # Opens $EDITOR with template
 
 ### Phase 3: Search & Graph
 
-- [ ] Full-text search via SQLite FTS5 (`search_fulltext`)
+- [x] Full-text search via SQLite FTS5 (`medulla search` command)
 - [ ] Semantic search via fastembed (`search_semantic`)
 - [ ] Immediate embedding computation on add/update (~50-200ms)
 - [ ] Search filters (`type:`, `status:`, `tag:`, `created:`)
@@ -1012,10 +1019,11 @@ Before implementation begins, the following areas need design decisions or furth
 
 1. ~~**Loro schema design**: How do entities and relations map to Loro's data structures (Map, List, Tree)? This shapes everything else.~~ ✓ Complete — see [Loro Schema Design](#loro-schema-design) section.
 2. ~~**Resolve open design questions**: Git integration, CLI design, MCP implementation, performance limits.~~ ✓ Complete — see TD14-TD23.
-3. ~~**Scaffold Rust project**: Set up cargo workspace, dependencies, basic module structure.~~ ✓ Complete — see [docs/plans/2025-01-30-scaffold-rust-project.md](plans/2025-01-30-scaffold-rust-project.md).
+3. ~~**Scaffold Rust project**: Set up cargo workspace, dependencies, basic module structure.~~ ✓ Complete
 4. ~~**Vertical slice**: Implement `init` + `add decision` + `list` end-to-end to prove the CRDT layer works.~~ ✓ Complete — CLI working with Loro CRDT storage.
-5. **Complete Phase 1**: Add remaining entity types, relations, update/delete commands, SQLite cache.
+5. ~~**Complete Phase 1**: Add remaining entity types, relations, update/delete commands, SQLite cache.~~ ✓ Complete — All 6 entity types implemented with full CLI support.
 6. **Validation**: Test git merge behavior with decisions on different branches.
+7. **Phase 2**: Implement MCP server — see [docs/plans/2025-01-31-phase2-mcp-server-design.md](plans/2025-01-31-phase2-mcp-server-design.md).
 
 ### Open Design Questions ✓ All Resolved
 

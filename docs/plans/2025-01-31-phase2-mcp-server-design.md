@@ -7,6 +7,12 @@
 
 Implement an MCP (Model Context Protocol) server that exposes Medulla's knowledge engine to AI tools like Claude Desktop, Cursor, and Copilot via the standard MCP protocol.
 
+### Design Goals
+
+1. **MCP-first**: Full protocol compliance with tools, resources, and subscriptions
+2. **CLI parity**: Every MCP capability has a corresponding CLI command
+3. **Beads parity**: Task queue management features (ready tasks, blockers) matching [steveyegge/beads](https://github.com/steveyegge/beads), but with Medulla's richer context (decisions, semantic search, relations)
+
 ## Architecture
 
 ```
@@ -86,6 +92,22 @@ pub struct MedullaServer {
 |------|-------------|------------|
 | `graph_relations` | Get relations for entity | `id`, `direction?` (from/to/both) |
 
+### Task Queue Tools (Beads Parity)
+
+These tools provide feature parity with [Beads](https://github.com/steveyegge/beads) for AI agent task management:
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `task_ready` | List tasks with no unresolved blocking dependencies | `limit?`, `priority?` |
+| `task_blocked` | List blocked tasks and what blocks them | `id?` (single task or all if omitted) |
+| `task_next` | Get the highest-priority ready task | - |
+
+**Implementation notes:**
+
+- `task_ready` queries tasks where `status != done` AND no incoming `blocks` relations from non-done tasks
+- Returns tasks sorted by priority (urgent > high > normal > low), then by due date
+- `task_next` is a convenience wrapper that returns `task_ready(limit=1)`
+
 ### Convenience Tools
 
 | Tool | Description | Parameters |
@@ -140,6 +162,8 @@ For `entity_create`, type-specific properties are passed in a `properties` objec
 | `medulla://decisions/active` | Non-superseded decisions |
 | `medulla://tasks` | All tasks |
 | `medulla://tasks/active` | Incomplete tasks |
+| `medulla://tasks/ready` | Tasks with no unresolved blockers (ready to work on) |
+| `medulla://tasks/blocked` | Blocked tasks with their blockers |
 | `medulla://tasks/due/{date}` | Tasks due on date |
 | `medulla://prompts` | Available prompts |
 | `medulla://graph` | Full knowledge graph (entities + relations) |
@@ -151,6 +175,20 @@ Per TD20, we support by-type subscriptions. When entities change, we notify subs
 **Deferred to Phase 3:** `medulla://context/{topic}` (semantic search)
 
 ## CLI Integration
+
+### Task Queue Commands (Beads Parity)
+
+```bash
+medulla tasks ready              # List tasks with no blockers, sorted by priority
+medulla tasks ready --limit=5    # Limit results
+medulla tasks next               # Show single highest-priority ready task
+medulla tasks blocked            # List blocked tasks and what blocks them
+medulla tasks blocked <id>       # Show blockers for specific task
+```
+
+**Implementation:** These commands are thin wrappers over the same query logic used by MCP tools, ensuring CLI and MCP have feature parity.
+
+### MCP Server Commands
 
 ```
 medulla serve              # stdio transport (default)
@@ -170,28 +208,37 @@ medulla serve --http 3000  # HTTP transport (Phase 5)
 
 ## Implementation Order
 
-### Pre-requisites (Remaining Phase 1 Work)
+### Pre-requisites ✓ COMPLETE
 
-1. Implement `task` entity type with properties: `status`, `priority`, `due_date?`, `assignee?`
-2. Implement `note` entity type with properties: `note_type?`
-3. Implement `prompt` entity type with properties: `template`, `variables[]`, `output_schema?`
-4. Implement `component` entity type with properties: `component_type`, `status`, `owner?`
-5. Implement `link` entity type with properties: `url`, `link_type`
-6. Update CLI to support all entity types in `add`, `list`, `get`, `update`, `delete`
+All Phase 1 entity types are now implemented:
+
+- [x] `task` entity type with properties: `status`, `priority`, `due_date?`, `assignee?`
+- [x] `note` entity type with properties: `note_type?`
+- [x] `prompt` entity type with properties: `template`, `variables[]`, `output_schema?`
+- [x] `component` entity type with properties: `component_type`, `status`, `owner?`
+- [x] `link` entity type with properties: `url`, `link_type`
+- [x] CLI support for all entity types in `add`, `list`, `get`, `update`, `delete`
 
 ### Phase 2 Implementation
 
 1. Add dependencies (`rmcp`, `tokio`, `schemars`) to `Cargo.toml`
 2. Create `src/mcp/mod.rs` with `MedullaServer` struct
-3. Implement tools in `src/mcp/tools.rs`:
+3. Implement core query functions in `src/storage/queries.rs`:
+   - `get_ready_tasks()` - tasks with no unresolved blockers
+   - `get_blocked_tasks()` - tasks with their blockers
+   - `get_task_blockers(id)` - what blocks a specific task
+4. Implement tools in `src/mcp/tools.rs`:
    - `entity_create`, `entity_get`, `entity_list`, `entity_update`, `entity_delete`
    - `entity_batch`
    - `search_fulltext`
    - `graph_relations`
+   - `task_ready`, `task_blocked`, `task_next` (Beads parity)
    - `task_complete`, `task_reschedule`, `decision_supersede`
-4. Implement resources in `src/mcp/resources.rs`
-5. Add `serve` command to CLI
-6. Test with Claude Desktop / MCP Inspector
+5. Implement resources in `src/mcp/resources.rs`
+6. Add CLI commands:
+   - `medulla serve` (MCP server)
+   - `medulla tasks ready`, `medulla tasks next`, `medulla tasks blocked`
+7. Test with Claude Desktop / MCP Inspector
 
 ## Validation Milestone
 
