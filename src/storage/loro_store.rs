@@ -60,7 +60,9 @@ impl LoroStore {
     /// Get the next sequence number for a given entity type
     pub fn next_sequence_number(&self, entity_type: &str) -> u32 {
         let meta = self.doc.get_map("_meta");
-        let sequences = meta.get_or_create_container("type_sequences", LoroMap::new()).unwrap();
+        let sequences = meta
+            .get_or_create_container("type_sequences", LoroMap::new())
+            .unwrap();
 
         let current = sequences
             .get(entity_type)
@@ -114,7 +116,8 @@ impl LoroStore {
         }
 
         // Store consequences as LoroList
-        let consequences_list = entity_map.get_or_create_container("consequences", loro::LoroList::new())?;
+        let consequences_list =
+            entity_map.get_or_create_container("consequences", loro::LoroList::new())?;
         for consequence in &decision.consequences {
             consequences_list.push(consequence.clone())?;
         }
@@ -167,12 +170,16 @@ impl LoroStore {
         };
 
         let created_at = match map.get("created_at")? {
-            LoroValue::String(s) => chrono::DateTime::parse_from_rfc3339(s).ok()?.with_timezone(&chrono::Utc),
+            LoroValue::String(s) => chrono::DateTime::parse_from_rfc3339(s)
+                .ok()?
+                .with_timezone(&chrono::Utc),
             _ => return None,
         };
 
         let updated_at = match map.get("updated_at")? {
-            LoroValue::String(s) => chrono::DateTime::parse_from_rfc3339(s).ok()?.with_timezone(&chrono::Utc),
+            LoroValue::String(s) => chrono::DateTime::parse_from_rfc3339(s)
+                .ok()?
+                .with_timezone(&chrono::Utc),
             _ => return None,
         };
 
@@ -186,39 +193,48 @@ impl LoroStore {
             _ => None,
         });
 
-        let status = map.get("status").and_then(|v| match v {
-            LoroValue::String(s) => s.parse().ok(),
-            _ => None,
-        }).unwrap_or_default();
+        let status = map
+            .get("status")
+            .and_then(|v| match v {
+                LoroValue::String(s) => s.parse().ok(),
+                _ => None,
+            })
+            .unwrap_or_default();
 
         let context = map.get("context").and_then(|v| match v {
             LoroValue::String(s) => Some(s.to_string()),
             _ => None,
         });
 
-        let tags = map.get("tags").and_then(|v| match v {
-            LoroValue::List(list) => Some(
-                list.iter()
-                    .filter_map(|item| match item {
-                        LoroValue::String(s) => Some(s.to_string()),
-                        _ => None,
-                    })
-                    .collect()
-            ),
-            _ => None,
-        }).unwrap_or_default();
+        let tags = map
+            .get("tags")
+            .and_then(|v| match v {
+                LoroValue::List(list) => Some(
+                    list.iter()
+                        .filter_map(|item| match item {
+                            LoroValue::String(s) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default();
 
-        let consequences = map.get("consequences").and_then(|v| match v {
-            LoroValue::List(list) => Some(
-                list.iter()
-                    .filter_map(|item| match item {
-                        LoroValue::String(s) => Some(s.to_string()),
-                        _ => None,
-                    })
-                    .collect()
-            ),
-            _ => None,
-        }).unwrap_or_default();
+        let consequences = map
+            .get("consequences")
+            .and_then(|v| match v {
+                LoroValue::List(list) => Some(
+                    list.iter()
+                        .filter_map(|item| match item {
+                            LoroValue::String(s) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default();
 
         let superseded_by = map.get("superseded_by").and_then(|v| match v {
             LoroValue::String(s) => Some(s.to_string()),

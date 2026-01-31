@@ -1,5 +1,7 @@
 use clap::Parser;
-use medulla::cli::{handle_add_decision, handle_get, handle_init, handle_list, AddEntity, Cli, Commands};
+use medulla::cli::{
+    handle_add_decision, handle_get, handle_init, handle_list, AddEntity, Cli, Commands,
+};
 
 fn main() {
     let cli = Cli::parse();

@@ -129,7 +129,10 @@ pub fn handle_list(entity_type: Option<String>, json: bool) -> Result<()> {
             }
         }
         _ => {
-            eprintln!("Entity type '{}' not yet supported. Try 'decision'.", entity_type);
+            eprintln!(
+                "Entity type '{}' not yet supported. Try 'decision'.",
+                entity_type
+            );
         }
     }
 
@@ -146,7 +149,9 @@ pub fn handle_get(id: String, json: bool) -> Result<()> {
     let decision = if let Ok(seq) = id.parse::<u32>() {
         decisions.iter().find(|d| d.base.sequence_number == seq)
     } else {
-        decisions.iter().find(|d| d.base.id.to_string().starts_with(&id))
+        decisions
+            .iter()
+            .find(|d| d.base.id.to_string().starts_with(&id))
     };
 
     match decision {

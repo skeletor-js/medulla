@@ -71,7 +71,13 @@ fn test_full_decision_workflow() {
     // Add first decision
     let output = medulla_cmd()
         .current_dir(tmp.path())
-        .args(["add", "decision", "Use Rust", "--status=accepted", "--tag=lang"])
+        .args([
+            "add",
+            "decision",
+            "Use Rust",
+            "--status=accepted",
+            "--tag=lang",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
