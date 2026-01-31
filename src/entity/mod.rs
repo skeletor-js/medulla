@@ -1,6 +1,18 @@
+mod component;
 mod decision;
+mod link;
+mod note;
+mod prompt;
+mod relation;
+mod task;
 
+pub use component::{Component, ComponentStatus};
 pub use decision::{Decision, DecisionStatus};
+pub use link::Link;
+pub use note::Note;
+pub use prompt::Prompt;
+pub use relation::{Relation, RelationType};
+pub use task::{Task, TaskPriority, TaskStatus};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

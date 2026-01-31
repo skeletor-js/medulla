@@ -1,6 +1,8 @@
 use clap::Parser;
 use medulla::cli::{
-    handle_add_decision, handle_get, handle_init, handle_list, AddEntity, Cli, Commands,
+    handle_add_component, handle_add_decision, handle_add_link, handle_add_note, handle_add_prompt,
+    handle_add_task, handle_delete, handle_get, handle_init, handle_list, handle_search,
+    handle_update, AddEntity, Cli, Commands,
 };
 
 fn main() {
@@ -18,9 +20,68 @@ fn main() {
                 edit,
                 json,
             } => handle_add_decision(title, status, tags, relations, stdin, edit, json),
+            AddEntity::Task {
+                title,
+                status,
+                priority,
+                due,
+                assignee,
+                tags,
+                relations,
+                stdin,
+                json,
+            } => handle_add_task(title, status, priority, due, assignee, tags, relations, stdin, json),
+            AddEntity::Note {
+                title,
+                note_type,
+                tags,
+                relations,
+                stdin,
+                json,
+            } => handle_add_note(title, note_type, tags, relations, stdin, json),
+            AddEntity::Prompt {
+                title,
+                template,
+                variables,
+                output_schema,
+                tags,
+                stdin,
+                json,
+            } => handle_add_prompt(title, template, variables, output_schema, tags, stdin, json),
+            AddEntity::Component {
+                title,
+                component_type,
+                status,
+                owner,
+                tags,
+                relations,
+                stdin,
+                json,
+            } => handle_add_component(title, component_type, status, owner, tags, relations, stdin, json),
+            AddEntity::Link {
+                title,
+                url,
+                link_type,
+                tags,
+                relations,
+                json,
+            } => handle_add_link(title, url, link_type, tags, relations, json),
         },
         Commands::List { entity_type, json } => handle_list(entity_type, json),
         Commands::Get { id, json } => handle_get(id, json),
+        Commands::Update {
+            id,
+            title,
+            status,
+            tags,
+            remove_tags,
+            relations,
+            stdin,
+            edit,
+            json,
+        } => handle_update(id, title, status, tags, remove_tags, relations, stdin, edit, json),
+        Commands::Delete { id, force } => handle_delete(id, force),
+        Commands::Search { query, json } => handle_search(query, json),
     };
 
     if let Err(e) = result {
