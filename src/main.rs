@@ -4,7 +4,7 @@ use medulla::cli::{Cli, Commands};
 fn main() {
     let cli = Cli::parse();
 
-    let result = match cli.command {
+    let result: Result<(), String> = match cli.command {
         Commands::Init { yes, no } => {
             println!("Init called with yes={}, no={}", yes, no);
             Ok(())
