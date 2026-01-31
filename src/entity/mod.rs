@@ -1,6 +1,6 @@
 mod decision;
 
-pub use decision::Decision;
+pub use decision::{Decision, DecisionStatus};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

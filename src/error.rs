@@ -25,6 +25,9 @@ pub enum MedullaError {
 
     #[error("Loro error: {0}")]
     Loro(#[from] loro::LoroError),
+
+    #[error("Loro encode error: {0}")]
+    LoroEncode(#[from] loro::LoroEncodeError),
 }
 
 pub type Result<T> = std::result::Result<T, MedullaError>;
