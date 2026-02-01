@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::entity::{Decision, Relation};
+use crate::entity::{Component, Decision, Link, Note, Prompt, Relation, Task};
 use crate::error::{MedullaError, Result};
 
 const CACHE_DB: &str = "cache.db";
@@ -89,6 +89,279 @@ impl SqliteCache {
             ",
         )?;
 
+        // Tasks table
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                sequence_number INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT,
+                status TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                due_date TEXT,
+                assignee TEXT,
+                tags TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_by TEXT
+            )",
+            [],
+        )?;
+
+        // FTS5 virtual table for full-text search on tasks
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
+                id,
+                title,
+                content,
+                status,
+                priority,
+                assignee,
+                tags,
+                content='tasks',
+                content_rowid='rowid'
+            )",
+            [],
+        )?;
+
+        // Triggers to keep FTS in sync with tasks table
+        self.conn.execute_batch(
+            "
+            CREATE TRIGGER IF NOT EXISTS tasks_ai AFTER INSERT ON tasks BEGIN
+                INSERT INTO tasks_fts(rowid, id, title, content, status, priority, assignee, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.status, new.priority, new.assignee, new.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS tasks_ad AFTER DELETE ON tasks BEGIN
+                INSERT INTO tasks_fts(tasks_fts, rowid, id, title, content, status, priority, assignee, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.status, old.priority, old.assignee, old.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS tasks_au AFTER UPDATE ON tasks BEGIN
+                INSERT INTO tasks_fts(tasks_fts, rowid, id, title, content, status, priority, assignee, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.status, old.priority, old.assignee, old.tags);
+                INSERT INTO tasks_fts(rowid, id, title, content, status, priority, assignee, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.status, new.priority, new.assignee, new.tags);
+            END;
+            ",
+        )?;
+
+        // Notes table
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS notes (
+                id TEXT PRIMARY KEY,
+                sequence_number INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT,
+                note_type TEXT,
+                tags TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_by TEXT
+            )",
+            [],
+        )?;
+
+        // FTS5 virtual table for full-text search on notes
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+                id,
+                title,
+                content,
+                note_type,
+                tags,
+                content='notes',
+                content_rowid='rowid'
+            )",
+            [],
+        )?;
+
+        // Triggers to keep FTS in sync with notes table
+        self.conn.execute_batch(
+            "
+            CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+                INSERT INTO notes_fts(rowid, id, title, content, note_type, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.note_type, new.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+                INSERT INTO notes_fts(notes_fts, rowid, id, title, content, note_type, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.note_type, old.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+                INSERT INTO notes_fts(notes_fts, rowid, id, title, content, note_type, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.note_type, old.tags);
+                INSERT INTO notes_fts(rowid, id, title, content, note_type, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.note_type, new.tags);
+            END;
+            ",
+        )?;
+
+        // Prompts table
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS prompts (
+                id TEXT PRIMARY KEY,
+                sequence_number INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT,
+                template TEXT,
+                output_schema TEXT,
+                variables TEXT,
+                tags TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_by TEXT
+            )",
+            [],
+        )?;
+
+        // FTS5 virtual table for full-text search on prompts
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
+                id,
+                title,
+                content,
+                template,
+                tags,
+                content='prompts',
+                content_rowid='rowid'
+            )",
+            [],
+        )?;
+
+        // Triggers to keep FTS in sync with prompts table
+        self.conn.execute_batch(
+            "
+            CREATE TRIGGER IF NOT EXISTS prompts_ai AFTER INSERT ON prompts BEGIN
+                INSERT INTO prompts_fts(rowid, id, title, content, template, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.template, new.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS prompts_ad AFTER DELETE ON prompts BEGIN
+                INSERT INTO prompts_fts(prompts_fts, rowid, id, title, content, template, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.template, old.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS prompts_au AFTER UPDATE ON prompts BEGIN
+                INSERT INTO prompts_fts(prompts_fts, rowid, id, title, content, template, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.template, old.tags);
+                INSERT INTO prompts_fts(rowid, id, title, content, template, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.template, new.tags);
+            END;
+            ",
+        )?;
+
+        // Components table
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS components (
+                id TEXT PRIMARY KEY,
+                sequence_number INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT,
+                status TEXT NOT NULL,
+                component_type TEXT,
+                owner TEXT,
+                tags TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_by TEXT
+            )",
+            [],
+        )?;
+
+        // FTS5 virtual table for full-text search on components
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS components_fts USING fts5(
+                id,
+                title,
+                content,
+                status,
+                component_type,
+                owner,
+                tags,
+                content='components',
+                content_rowid='rowid'
+            )",
+            [],
+        )?;
+
+        // Triggers to keep FTS in sync with components table
+        self.conn.execute_batch(
+            "
+            CREATE TRIGGER IF NOT EXISTS components_ai AFTER INSERT ON components BEGIN
+                INSERT INTO components_fts(rowid, id, title, content, status, component_type, owner, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.status, new.component_type, new.owner, new.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS components_ad AFTER DELETE ON components BEGIN
+                INSERT INTO components_fts(components_fts, rowid, id, title, content, status, component_type, owner, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.status, old.component_type, old.owner, old.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS components_au AFTER UPDATE ON components BEGIN
+                INSERT INTO components_fts(components_fts, rowid, id, title, content, status, component_type, owner, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.status, old.component_type, old.owner, old.tags);
+                INSERT INTO components_fts(rowid, id, title, content, status, component_type, owner, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.status, new.component_type, new.owner, new.tags);
+            END;
+            ",
+        )?;
+
+        // Links table
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS links (
+                id TEXT PRIMARY KEY,
+                sequence_number INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT,
+                url TEXT NOT NULL,
+                link_type TEXT,
+                tags TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_by TEXT
+            )",
+            [],
+        )?;
+
+        // FTS5 virtual table for full-text search on links
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS links_fts USING fts5(
+                id,
+                title,
+                content,
+                url,
+                link_type,
+                tags,
+                content='links',
+                content_rowid='rowid'
+            )",
+            [],
+        )?;
+
+        // Triggers to keep FTS in sync with links table
+        self.conn.execute_batch(
+            "
+            CREATE TRIGGER IF NOT EXISTS links_ai AFTER INSERT ON links BEGIN
+                INSERT INTO links_fts(rowid, id, title, content, url, link_type, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.url, new.link_type, new.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS links_ad AFTER DELETE ON links BEGIN
+                INSERT INTO links_fts(links_fts, rowid, id, title, content, url, link_type, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.url, old.link_type, old.tags);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS links_au AFTER UPDATE ON links BEGIN
+                INSERT INTO links_fts(links_fts, rowid, id, title, content, url, link_type, tags)
+                VALUES ('delete', old.rowid, old.id, old.title, old.content, old.url, old.link_type, old.tags);
+                INSERT INTO links_fts(rowid, id, title, content, url, link_type, tags)
+                VALUES (new.rowid, new.id, new.title, new.content, new.url, new.link_type, new.tags);
+            END;
+            ",
+        )?;
+
         // Relations table with indexes for fast lookups
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS relations (
@@ -171,6 +444,167 @@ impl SqliteCache {
         Ok(())
     }
 
+    /// Index a task in the cache
+    pub fn index_task(&self, task: &Task) -> Result<()> {
+        let tags_str = task.base.tags.join(", ");
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO tasks
+             (id, sequence_number, title, content, status, priority, due_date, assignee, tags, created_at, updated_at, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                task.base.id.to_string(),
+                task.base.sequence_number,
+                task.base.title,
+                task.base.content,
+                task.status.to_string(),
+                task.priority.to_string(),
+                task.due_date.map(|d| d.to_string()),
+                task.assignee,
+                tags_str,
+                task.base.created_at.to_rfc3339(),
+                task.base.updated_at.to_rfc3339(),
+                task.base.created_by,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Remove a task from the cache
+    pub fn remove_task(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Index a note in the cache
+    pub fn index_note(&self, note: &Note) -> Result<()> {
+        let tags_str = note.base.tags.join(", ");
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO notes
+             (id, sequence_number, title, content, note_type, tags, created_at, updated_at, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                note.base.id.to_string(),
+                note.base.sequence_number,
+                note.base.title,
+                note.base.content,
+                note.note_type,
+                tags_str,
+                note.base.created_at.to_rfc3339(),
+                note.base.updated_at.to_rfc3339(),
+                note.base.created_by,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Remove a note from the cache
+    pub fn remove_note(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Index a prompt in the cache
+    pub fn index_prompt(&self, prompt: &Prompt) -> Result<()> {
+        let tags_str = prompt.base.tags.join(", ");
+        let vars_str = prompt.variables.join(", ");
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO prompts
+             (id, sequence_number, title, content, template, output_schema, variables, tags, created_at, updated_at, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                prompt.base.id.to_string(),
+                prompt.base.sequence_number,
+                prompt.base.title,
+                prompt.base.content,
+                prompt.template,
+                prompt.output_schema,
+                vars_str,
+                tags_str,
+                prompt.base.created_at.to_rfc3339(),
+                prompt.base.updated_at.to_rfc3339(),
+                prompt.base.created_by,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Remove a prompt from the cache
+    pub fn remove_prompt(&self, id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM prompts WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Index a component in the cache
+    pub fn index_component(&self, component: &Component) -> Result<()> {
+        let tags_str = component.base.tags.join(", ");
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO components
+             (id, sequence_number, title, content, status, component_type, owner, tags, created_at, updated_at, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                component.base.id.to_string(),
+                component.base.sequence_number,
+                component.base.title,
+                component.base.content,
+                component.status.to_string(),
+                component.component_type,
+                component.owner,
+                tags_str,
+                component.base.created_at.to_rfc3339(),
+                component.base.updated_at.to_rfc3339(),
+                component.base.created_by,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Remove a component from the cache
+    pub fn remove_component(&self, id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM components WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Index a link in the cache
+    pub fn index_link(&self, link: &Link) -> Result<()> {
+        let tags_str = link.base.tags.join(", ");
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO links
+             (id, sequence_number, title, content, url, link_type, tags, created_at, updated_at, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                link.base.id.to_string(),
+                link.base.sequence_number,
+                link.base.title,
+                link.base.content,
+                link.url,
+                link.link_type,
+                tags_str,
+                link.base.created_at.to_rfc3339(),
+                link.base.updated_at.to_rfc3339(),
+                link.base.created_by,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Remove a link from the cache
+    pub fn remove_link(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM links WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     /// Index a relation in the cache
     pub fn index_relation(&self, relation: &Relation) -> Result<()> {
         self.conn.execute(
@@ -193,21 +627,28 @@ impl SqliteCache {
 
     /// Remove a relation from the cache
     pub fn remove_relation(&self, composite_key: &str) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM relations WHERE composite_key = ?1", [composite_key])?;
+        self.conn.execute(
+            "DELETE FROM relations WHERE composite_key = ?1",
+            [composite_key],
+        )?;
         Ok(())
     }
 
     /// Clear all cached data (for full rebuild)
     pub fn clear(&self) -> Result<()> {
         self.conn.execute("DELETE FROM decisions", [])?;
+        self.conn.execute("DELETE FROM tasks", [])?;
+        self.conn.execute("DELETE FROM notes", [])?;
+        self.conn.execute("DELETE FROM prompts", [])?;
+        self.conn.execute("DELETE FROM components", [])?;
+        self.conn.execute("DELETE FROM links", [])?;
         self.conn.execute("DELETE FROM relations", [])?;
         self.conn.execute("DELETE FROM meta", [])?;
         Ok(())
     }
 
     /// Full-text search for decisions
-    pub fn search_decisions(&self, query: &str) -> Result<Vec<SearchResult>> {
+    pub fn search_decisions(&self, query: &str, limit: i64) -> Result<Vec<DecisionSearchResult>> {
         let mut stmt = self.conn.prepare(
             "SELECT d.id, d.sequence_number, d.title, d.status,
                     highlight(decisions_fts, 1, '<mark>', '</mark>') as title_highlight,
@@ -216,12 +657,12 @@ impl SqliteCache {
              JOIN decisions d ON d.id = f.id
              WHERE decisions_fts MATCH ?1
              ORDER BY rank
-             LIMIT 50",
+             LIMIT ?2",
         )?;
 
         let results = stmt
-            .query_map([query], |row| {
-                Ok(SearchResult {
+            .query_map(params![query, limit], |row| {
+                Ok(DecisionSearchResult {
                     id: row.get(0)?,
                     sequence_number: row.get(1)?,
                     title: row.get(2)?,
@@ -233,6 +674,209 @@ impl SqliteCache {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(results)
+    }
+
+    /// Full-text search for tasks
+    pub fn search_tasks(&self, query: &str, limit: i64) -> Result<Vec<TaskSearchResult>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.sequence_number, t.title, t.status, t.priority, t.assignee,
+                    highlight(tasks_fts, 1, '<mark>', '</mark>') as title_highlight,
+                    snippet(tasks_fts, 2, '<mark>', '</mark>', '...', 32) as content_snippet
+             FROM tasks_fts f
+             JOIN tasks t ON t.id = f.id
+             WHERE tasks_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?;
+
+        let results = stmt
+            .query_map(params![query, limit], |row| {
+                Ok(TaskSearchResult {
+                    id: row.get(0)?,
+                    sequence_number: row.get(1)?,
+                    title: row.get(2)?,
+                    status: row.get(3)?,
+                    priority: row.get(4)?,
+                    assignee: row.get(5)?,
+                    title_highlight: row.get(6)?,
+                    content_snippet: row.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    /// Full-text search for notes
+    pub fn search_notes(&self, query: &str, limit: i64) -> Result<Vec<NoteSearchResult>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT n.id, n.sequence_number, n.title, n.note_type,
+                    highlight(notes_fts, 1, '<mark>', '</mark>') as title_highlight,
+                    snippet(notes_fts, 2, '<mark>', '</mark>', '...', 32) as content_snippet
+             FROM notes_fts f
+             JOIN notes n ON n.id = f.id
+             WHERE notes_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?;
+
+        let results = stmt
+            .query_map(params![query, limit], |row| {
+                Ok(NoteSearchResult {
+                    id: row.get(0)?,
+                    sequence_number: row.get(1)?,
+                    title: row.get(2)?,
+                    note_type: row.get(3)?,
+                    title_highlight: row.get(4)?,
+                    content_snippet: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    /// Full-text search for prompts
+    pub fn search_prompts(&self, query: &str, limit: i64) -> Result<Vec<PromptSearchResult>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.sequence_number, p.title, p.variables,
+                    highlight(prompts_fts, 1, '<mark>', '</mark>') as title_highlight,
+                    snippet(prompts_fts, 2, '<mark>', '</mark>', '...', 32) as content_snippet
+             FROM prompts_fts f
+             JOIN prompts p ON p.id = f.id
+             WHERE prompts_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?;
+
+        let results = stmt
+            .query_map(params![query, limit], |row| {
+                let vars_str: String = row.get(3)?;
+                let variables = vars_str
+                    .split(", ")
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect();
+                Ok(PromptSearchResult {
+                    id: row.get(0)?,
+                    sequence_number: row.get(1)?,
+                    title: row.get(2)?,
+                    variables,
+                    title_highlight: row.get(4)?,
+                    content_snippet: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    /// Full-text search for components
+    pub fn search_components(&self, query: &str, limit: i64) -> Result<Vec<ComponentSearchResult>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.sequence_number, c.title, c.status, c.component_type, c.owner,
+                    highlight(components_fts, 1, '<mark>', '</mark>') as title_highlight,
+                    snippet(components_fts, 2, '<mark>', '</mark>', '...', 32) as content_snippet
+             FROM components_fts f
+             JOIN components c ON c.id = f.id
+             WHERE components_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?;
+
+        let results = stmt
+            .query_map(params![query, limit], |row| {
+                Ok(ComponentSearchResult {
+                    id: row.get(0)?,
+                    sequence_number: row.get(1)?,
+                    title: row.get(2)?,
+                    status: row.get(3)?,
+                    component_type: row.get(4)?,
+                    owner: row.get(5)?,
+                    title_highlight: row.get(6)?,
+                    content_snippet: row.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    /// Full-text search for links
+    pub fn search_links(&self, query: &str, limit: i64) -> Result<Vec<LinkSearchResult>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT l.id, l.sequence_number, l.title, l.url, l.link_type,
+                    highlight(links_fts, 1, '<mark>', '</mark>') as title_highlight,
+                    snippet(links_fts, 2, '<mark>', '</mark>', '...', 32) as content_snippet
+             FROM links_fts f
+             JOIN links l ON l.id = f.id
+             WHERE links_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?;
+
+        let results = stmt
+            .query_map(params![query, limit], |row| {
+                Ok(LinkSearchResult {
+                    id: row.get(0)?,
+                    sequence_number: row.get(1)?,
+                    title: row.get(2)?,
+                    url: row.get(3)?,
+                    link_type: row.get(4)?,
+                    title_highlight: row.get(5)?,
+                    content_snippet: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    /// Search across all entity types and return combined results
+    pub fn search_all(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>> {
+        let mut all_results = Vec::new();
+
+        // Search each entity type
+        if let Ok(decisions) = self.search_decisions(query, limit) {
+            for r in decisions {
+                all_results.push(SearchResult::Decision(r));
+            }
+        }
+
+        if let Ok(tasks) = self.search_tasks(query, limit) {
+            for r in tasks {
+                all_results.push(SearchResult::Task(r));
+            }
+        }
+
+        if let Ok(notes) = self.search_notes(query, limit) {
+            for r in notes {
+                all_results.push(SearchResult::Note(r));
+            }
+        }
+
+        if let Ok(prompts) = self.search_prompts(query, limit) {
+            for r in prompts {
+                all_results.push(SearchResult::Prompt(r));
+            }
+        }
+
+        if let Ok(components) = self.search_components(query, limit) {
+            for r in components {
+                all_results.push(SearchResult::Component(r));
+            }
+        }
+
+        if let Ok(links) = self.search_links(query, limit) {
+            for r in links {
+                all_results.push(SearchResult::Link(r));
+            }
+        }
+
+        // Limit total results
+        all_results.truncate(limit as usize);
+
+        Ok(all_results)
     }
 
     /// Get relations from a source entity
@@ -320,15 +964,86 @@ impl SqliteCache {
     }
 }
 
-/// Search result from full-text search
+/// Search result from full-text search for decisions
 #[derive(Debug, Clone)]
-pub struct SearchResult {
+pub struct DecisionSearchResult {
     pub id: String,
     pub sequence_number: u32,
     pub title: String,
     pub status: String,
     pub title_highlight: Option<String>,
     pub content_snippet: Option<String>,
+}
+
+/// Search result from full-text search for tasks
+#[derive(Debug, Clone)]
+pub struct TaskSearchResult {
+    pub id: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub assignee: Option<String>,
+    pub title_highlight: Option<String>,
+    pub content_snippet: Option<String>,
+}
+
+/// Search result from full-text search for notes
+#[derive(Debug, Clone)]
+pub struct NoteSearchResult {
+    pub id: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub note_type: Option<String>,
+    pub title_highlight: Option<String>,
+    pub content_snippet: Option<String>,
+}
+
+/// Search result from full-text search for prompts
+#[derive(Debug, Clone)]
+pub struct PromptSearchResult {
+    pub id: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub variables: Vec<String>,
+    pub title_highlight: Option<String>,
+    pub content_snippet: Option<String>,
+}
+
+/// Search result from full-text search for components
+#[derive(Debug, Clone)]
+pub struct ComponentSearchResult {
+    pub id: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub status: String,
+    pub component_type: Option<String>,
+    pub owner: Option<String>,
+    pub title_highlight: Option<String>,
+    pub content_snippet: Option<String>,
+}
+
+/// Search result from full-text search for links
+#[derive(Debug, Clone)]
+pub struct LinkSearchResult {
+    pub id: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub url: String,
+    pub link_type: Option<String>,
+    pub title_highlight: Option<String>,
+    pub content_snippet: Option<String>,
+}
+
+/// Combined search result for all entity types
+#[derive(Debug, Clone)]
+pub enum SearchResult {
+    Decision(DecisionSearchResult),
+    Task(TaskSearchResult),
+    Note(NoteSearchResult),
+    Prompt(PromptSearchResult),
+    Component(ComponentSearchResult),
+    Link(LinkSearchResult),
 }
 
 /// Cached relation for fast queries
@@ -373,11 +1088,17 @@ mod tests {
 
         // Set version
         cache.set_loro_version("abc123").unwrap();
-        assert_eq!(cache.get_loro_version().unwrap(), Some("abc123".to_string()));
+        assert_eq!(
+            cache.get_loro_version().unwrap(),
+            Some("abc123".to_string())
+        );
 
         // Update version
         cache.set_loro_version("def456").unwrap();
-        assert_eq!(cache.get_loro_version().unwrap(), Some("def456".to_string()));
+        assert_eq!(
+            cache.get_loro_version().unwrap(),
+            Some("def456".to_string())
+        );
     }
 
     #[test]
@@ -389,12 +1110,12 @@ mod tests {
         cache.index_decision(&decision).unwrap();
 
         // Search for it
-        let results = cache.search_decisions("PostgreSQL").unwrap();
+        let results = cache.search_decisions("PostgreSQL", 50).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Use PostgreSQL for database");
 
         // Search for non-matching term
-        let results = cache.search_decisions("MySQL").unwrap();
+        let results = cache.search_decisions("MySQL", 50).unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -452,7 +1173,7 @@ mod tests {
         assert!(reindexed);
 
         // Search should work
-        let results = cache.search_decisions("Decision").unwrap();
+        let results = cache.search_decisions("Decision", 50).unwrap();
         assert_eq!(results.len(), 2);
 
         // Same version should skip

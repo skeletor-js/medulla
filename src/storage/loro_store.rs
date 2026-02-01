@@ -37,6 +37,52 @@ pub struct TaskUpdate {
     pub remove_tags: Vec<String>,
 }
 
+/// Update payload for a note
+#[derive(Default)]
+pub struct NoteUpdate {
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub note_type: Option<Option<String>>, // Some(None) to clear, Some(Some(s)) to set
+    pub add_tags: Vec<String>,
+    pub remove_tags: Vec<String>,
+}
+
+/// Update payload for a prompt
+#[derive(Default)]
+pub struct PromptUpdate {
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub template: Option<Option<String>>, // Some(None) to clear, Some(Some(s)) to set
+    pub output_schema: Option<Option<String>>, // Some(None) to clear, Some(Some(s)) to set
+    pub add_variables: Vec<String>,
+    pub remove_variables: Vec<String>,
+    pub add_tags: Vec<String>,
+    pub remove_tags: Vec<String>,
+}
+
+/// Update payload for a component
+#[derive(Default)]
+pub struct ComponentUpdate {
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub status: Option<crate::entity::ComponentStatus>,
+    pub component_type: Option<Option<String>>, // Some(None) to clear, Some(Some(s)) to set
+    pub owner: Option<Option<String>>,          // Some(None) to clear, Some(Some(s)) to set
+    pub add_tags: Vec<String>,
+    pub remove_tags: Vec<String>,
+}
+
+/// Update payload for a link
+#[derive(Default)]
+pub struct LinkUpdate {
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub url: Option<String>,
+    pub link_type: Option<Option<String>>, // Some(None) to clear, Some(Some(s)) to set
+    pub add_tags: Vec<String>,
+    pub remove_tags: Vec<String>,
+}
+
 pub struct LoroStore {
     doc: LoroDoc,
     path: PathBuf,
@@ -344,7 +390,12 @@ impl LoroStore {
     }
 
     /// Delete a relation by its composite key
-    pub fn delete_relation(&self, source_id: &str, relation_type: &str, target_id: &str) -> Result<()> {
+    pub fn delete_relation(
+        &self,
+        source_id: &str,
+        relation_type: &str,
+        target_id: &str,
+    ) -> Result<()> {
         let relations_map = self.doc.get_map("relations");
         let key = format!("{}:{}:{}", source_id, relation_type, target_id);
 
@@ -938,6 +989,88 @@ impl LoroStore {
         Ok(())
     }
 
+    /// Update an existing note
+    pub fn update_note(&self, id: &uuid::Uuid, updates: NoteUpdate) -> Result<()> {
+        let notes_map = self.doc.get_map("notes");
+        let id_str = id.to_string();
+
+        // Check if the note exists
+        let entity_map = match notes_map.get(&id_str) {
+            Some(ValueOrContainer::Container(loro::Container::Map(map))) => map,
+            _ => return Err(MedullaError::EntityNotFound(id_str)),
+        };
+
+        // Apply updates
+        let now = chrono::Utc::now();
+        entity_map.insert("updated_at", now.to_rfc3339())?;
+
+        if let Some(title) = updates.title {
+            entity_map.insert("title", title)?;
+        }
+
+        if let Some(content) = updates.content {
+            entity_map.insert("content", content)?;
+        }
+
+        if let Some(note_type_opt) = updates.note_type {
+            match note_type_opt {
+                Some(note_type) => entity_map.insert("note_type", note_type)?,
+                None => entity_map.delete("note_type")?,
+            };
+        }
+
+        // Handle tag additions and removals
+        if !updates.add_tags.is_empty() || !updates.remove_tags.is_empty() {
+            // Get existing tags
+            let existing_tags: Vec<String> = entity_map
+                .get("tags")
+                .and_then(|v| match v {
+                    ValueOrContainer::Container(loro::Container::List(list)) => {
+                        let deep = list.get_deep_value();
+                        match deep {
+                            LoroValue::List(items) => Some(
+                                items
+                                    .iter()
+                                    .filter_map(|item| match item {
+                                        LoroValue::String(s) => Some(s.to_string()),
+                                        _ => None,
+                                    })
+                                    .collect(),
+                            ),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            // Calculate new tags: existing + add - remove
+            let mut new_tags: Vec<String> = existing_tags
+                .into_iter()
+                .filter(|t| !updates.remove_tags.contains(t))
+                .collect();
+            for tag in updates.add_tags {
+                if !new_tags.contains(&tag) {
+                    new_tags.push(tag);
+                }
+            }
+
+            // Clear and repopulate tags list
+            let tags_list = entity_map.get_or_create_container("tags", loro::LoroList::new())?;
+            // Delete all existing entries
+            while tags_list.len() > 0 {
+                tags_list.delete(0, 1)?;
+            }
+            // Add new tags
+            for tag in new_tags {
+                tags_list.push(tag)?;
+            }
+        }
+
+        self.doc.commit();
+        Ok(())
+    }
+
     fn parse_note_from_map(&self, map: &loro::LoroMapValue) -> Option<Note> {
         let id = match map.get("id")? {
             LoroValue::String(s) => s.parse().ok()?,
@@ -1039,7 +1172,8 @@ impl LoroStore {
             tags_list.push(tag.clone())?;
         }
 
-        let variables_list = entity_map.get_or_create_container("variables", loro::LoroList::new())?;
+        let variables_list =
+            entity_map.get_or_create_container("variables", loro::LoroList::new())?;
         for var in &prompt.variables {
             variables_list.push(var.clone())?;
         }
@@ -1096,6 +1230,144 @@ impl LoroStore {
         }
 
         prompts_map.delete(&id_str)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Update an existing prompt
+    pub fn update_prompt(&self, id: &uuid::Uuid, updates: PromptUpdate) -> Result<()> {
+        let prompts_map = self.doc.get_map("prompts");
+        let id_str = id.to_string();
+
+        // Check if the prompt exists
+        let entity_map = match prompts_map.get(&id_str) {
+            Some(ValueOrContainer::Container(loro::Container::Map(map))) => map,
+            _ => return Err(MedullaError::EntityNotFound(id_str)),
+        };
+
+        // Apply updates
+        let now = chrono::Utc::now();
+        entity_map.insert("updated_at", now.to_rfc3339())?;
+
+        if let Some(title) = updates.title {
+            entity_map.insert("title", title)?;
+        }
+
+        if let Some(content) = updates.content {
+            entity_map.insert("content", content)?;
+        }
+
+        if let Some(template_opt) = updates.template {
+            match template_opt {
+                Some(template) => entity_map.insert("template", template)?,
+                None => entity_map.delete("template")?,
+            };
+        }
+
+        if let Some(output_schema_opt) = updates.output_schema {
+            match output_schema_opt {
+                Some(output_schema) => entity_map.insert("output_schema", output_schema)?,
+                None => entity_map.delete("output_schema")?,
+            };
+        }
+
+        // Handle variable additions and removals
+        if !updates.add_variables.is_empty() || !updates.remove_variables.is_empty() {
+            // Get existing variables
+            let existing_variables: Vec<String> = entity_map
+                .get("variables")
+                .and_then(|v| match v {
+                    ValueOrContainer::Container(loro::Container::List(list)) => {
+                        let deep = list.get_deep_value();
+                        match deep {
+                            LoroValue::List(items) => Some(
+                                items
+                                    .iter()
+                                    .filter_map(|item| match item {
+                                        LoroValue::String(s) => Some(s.to_string()),
+                                        _ => None,
+                                    })
+                                    .collect(),
+                            ),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            // Calculate new variables: existing + add - remove
+            let mut new_variables: Vec<String> = existing_variables
+                .into_iter()
+                .filter(|v| !updates.remove_variables.contains(v))
+                .collect();
+            for var in updates.add_variables {
+                if !new_variables.contains(&var) {
+                    new_variables.push(var);
+                }
+            }
+
+            // Clear and repopulate variables list
+            let variables_list =
+                entity_map.get_or_create_container("variables", loro::LoroList::new())?;
+            // Delete all existing entries
+            while variables_list.len() > 0 {
+                variables_list.delete(0, 1)?;
+            }
+            // Add new variables
+            for var in new_variables {
+                variables_list.push(var)?;
+            }
+        }
+
+        // Handle tag additions and removals
+        if !updates.add_tags.is_empty() || !updates.remove_tags.is_empty() {
+            // Get existing tags
+            let existing_tags: Vec<String> = entity_map
+                .get("tags")
+                .and_then(|v| match v {
+                    ValueOrContainer::Container(loro::Container::List(list)) => {
+                        let deep = list.get_deep_value();
+                        match deep {
+                            LoroValue::List(items) => Some(
+                                items
+                                    .iter()
+                                    .filter_map(|item| match item {
+                                        LoroValue::String(s) => Some(s.to_string()),
+                                        _ => None,
+                                    })
+                                    .collect(),
+                            ),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            // Calculate new tags: existing + add - remove
+            let mut new_tags: Vec<String> = existing_tags
+                .into_iter()
+                .filter(|t| !updates.remove_tags.contains(t))
+                .collect();
+            for tag in updates.add_tags {
+                if !new_tags.contains(&tag) {
+                    new_tags.push(tag);
+                }
+            }
+
+            // Clear and repopulate tags list
+            let tags_list = entity_map.get_or_create_container("tags", loro::LoroList::new())?;
+            // Delete all existing entries
+            while tags_list.len() > 0 {
+                tags_list.delete(0, 1)?;
+            }
+            // Add new tags
+            for tag in new_tags {
+                tags_list.push(tag)?;
+            }
+        }
+
         self.doc.commit();
         Ok(())
     }
@@ -1278,6 +1550,99 @@ impl LoroStore {
         Ok(())
     }
 
+    /// Update an existing component
+    pub fn update_component(&self, id: &uuid::Uuid, updates: ComponentUpdate) -> Result<()> {
+        let components_map = self.doc.get_map("components");
+        let id_str = id.to_string();
+
+        // Check if the component exists
+        let entity_map = match components_map.get(&id_str) {
+            Some(ValueOrContainer::Container(loro::Container::Map(map))) => map,
+            _ => return Err(MedullaError::EntityNotFound(id_str)),
+        };
+
+        // Apply updates
+        let now = chrono::Utc::now();
+        entity_map.insert("updated_at", now.to_rfc3339())?;
+
+        if let Some(title) = updates.title {
+            entity_map.insert("title", title)?;
+        }
+
+        if let Some(content) = updates.content {
+            entity_map.insert("content", content)?;
+        }
+
+        if let Some(status) = updates.status {
+            entity_map.insert("status", status.to_string())?;
+        }
+
+        if let Some(component_type_opt) = updates.component_type {
+            match component_type_opt {
+                Some(component_type) => entity_map.insert("component_type", component_type)?,
+                None => entity_map.delete("component_type")?,
+            };
+        }
+
+        if let Some(owner_opt) = updates.owner {
+            match owner_opt {
+                Some(owner) => entity_map.insert("owner", owner)?,
+                None => entity_map.delete("owner")?,
+            };
+        }
+
+        // Handle tag additions and removals
+        if !updates.add_tags.is_empty() || !updates.remove_tags.is_empty() {
+            // Get existing tags
+            let existing_tags: Vec<String> = entity_map
+                .get("tags")
+                .and_then(|v| match v {
+                    ValueOrContainer::Container(loro::Container::List(list)) => {
+                        let deep = list.get_deep_value();
+                        match deep {
+                            LoroValue::List(items) => Some(
+                                items
+                                    .iter()
+                                    .filter_map(|item| match item {
+                                        LoroValue::String(s) => Some(s.to_string()),
+                                        _ => None,
+                                    })
+                                    .collect(),
+                            ),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            // Calculate new tags: existing + add - remove
+            let mut new_tags: Vec<String> = existing_tags
+                .into_iter()
+                .filter(|t| !updates.remove_tags.contains(t))
+                .collect();
+            for tag in updates.add_tags {
+                if !new_tags.contains(&tag) {
+                    new_tags.push(tag);
+                }
+            }
+
+            // Clear and repopulate tags list
+            let tags_list = entity_map.get_or_create_container("tags", loro::LoroList::new())?;
+            // Delete all existing entries
+            while tags_list.len() > 0 {
+                tags_list.delete(0, 1)?;
+            }
+            // Add new tags
+            for tag in new_tags {
+                tags_list.push(tag)?;
+            }
+        }
+
+        self.doc.commit();
+        Ok(())
+    }
+
     fn parse_component_from_map(&self, map: &loro::LoroMapValue) -> Option<Component> {
         let id = match map.get("id")? {
             LoroValue::String(s) => s.parse().ok()?,
@@ -1446,6 +1811,92 @@ impl LoroStore {
         Ok(())
     }
 
+    /// Update an existing link
+    pub fn update_link(&self, id: &uuid::Uuid, updates: LinkUpdate) -> Result<()> {
+        let links_map = self.doc.get_map("links");
+        let id_str = id.to_string();
+
+        // Check if the link exists
+        let entity_map = match links_map.get(&id_str) {
+            Some(ValueOrContainer::Container(loro::Container::Map(map))) => map,
+            _ => return Err(MedullaError::EntityNotFound(id_str)),
+        };
+
+        // Apply updates
+        let now = chrono::Utc::now();
+        entity_map.insert("updated_at", now.to_rfc3339())?;
+
+        if let Some(title) = updates.title {
+            entity_map.insert("title", title)?;
+        }
+
+        if let Some(content) = updates.content {
+            entity_map.insert("content", content)?;
+        }
+
+        if let Some(url) = updates.url {
+            entity_map.insert("url", url)?;
+        }
+
+        if let Some(link_type_opt) = updates.link_type {
+            match link_type_opt {
+                Some(link_type) => entity_map.insert("link_type", link_type)?,
+                None => entity_map.delete("link_type")?,
+            };
+        }
+
+        // Handle tag additions and removals
+        if !updates.add_tags.is_empty() || !updates.remove_tags.is_empty() {
+            // Get existing tags
+            let existing_tags: Vec<String> = entity_map
+                .get("tags")
+                .and_then(|v| match v {
+                    ValueOrContainer::Container(loro::Container::List(list)) => {
+                        let deep = list.get_deep_value();
+                        match deep {
+                            LoroValue::List(items) => Some(
+                                items
+                                    .iter()
+                                    .filter_map(|item| match item {
+                                        LoroValue::String(s) => Some(s.to_string()),
+                                        _ => None,
+                                    })
+                                    .collect(),
+                            ),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            // Calculate new tags: existing + add - remove
+            let mut new_tags: Vec<String> = existing_tags
+                .into_iter()
+                .filter(|t| !updates.remove_tags.contains(t))
+                .collect();
+            for tag in updates.add_tags {
+                if !new_tags.contains(&tag) {
+                    new_tags.push(tag);
+                }
+            }
+
+            // Clear and repopulate tags list
+            let tags_list = entity_map.get_or_create_container("tags", loro::LoroList::new())?;
+            // Delete all existing entries
+            while tags_list.len() > 0 {
+                tags_list.delete(0, 1)?;
+            }
+            // Add new tags
+            for tag in new_tags {
+                tags_list.push(tag)?;
+            }
+        }
+
+        self.doc.commit();
+        Ok(())
+    }
+
     fn parse_link_from_map(&self, map: &loro::LoroMapValue) -> Option<Link> {
         let id = match map.get("id")? {
             LoroValue::String(s) => s.parse().ok()?,
@@ -1602,7 +2053,10 @@ mod tests {
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0].source_id, decision2.base.id);
         assert_eq!(relations[0].target_id, decision1.base.id);
-        assert_eq!(relations[0].relation_type, crate::entity::RelationType::Implements);
+        assert_eq!(
+            relations[0].relation_type,
+            crate::entity::RelationType::Implements
+        );
     }
 
     #[test]
@@ -1641,14 +2095,24 @@ mod tests {
         store.save().unwrap();
 
         // Test get_relations_from
-        let from_d2 = store.get_relations_from(&decision2.base.id.to_string()).unwrap();
+        let from_d2 = store
+            .get_relations_from(&decision2.base.id.to_string())
+            .unwrap();
         assert_eq!(from_d2.len(), 1);
-        assert_eq!(from_d2[0].relation_type, crate::entity::RelationType::Supersedes);
+        assert_eq!(
+            from_d2[0].relation_type,
+            crate::entity::RelationType::Supersedes
+        );
 
         // Test get_relations_to
-        let to_d2 = store.get_relations_to(&decision2.base.id.to_string()).unwrap();
+        let to_d2 = store
+            .get_relations_to(&decision2.base.id.to_string())
+            .unwrap();
         assert_eq!(to_d2.len(), 1);
-        assert_eq!(to_d2[0].relation_type, crate::entity::RelationType::References);
+        assert_eq!(
+            to_d2[0].relation_type,
+            crate::entity::RelationType::References
+        );
     }
 
     #[test]
@@ -1674,11 +2138,13 @@ mod tests {
         assert_eq!(store.list_relations().unwrap().len(), 1);
 
         // Delete the relation
-        store.delete_relation(
-            &decision2.base.id.to_string(),
-            "supersedes",
-            &decision1.base.id.to_string(),
-        ).unwrap();
+        store
+            .delete_relation(
+                &decision2.base.id.to_string(),
+                "supersedes",
+                &decision1.base.id.to_string(),
+            )
+            .unwrap();
         store.save().unwrap();
 
         assert_eq!(store.list_relations().unwrap().len(), 0);
@@ -1732,7 +2198,10 @@ mod tests {
 
         assert_eq!(updated.base.title, "Updated Title");
         assert_eq!(updated.status, crate::entity::DecisionStatus::Accepted);
-        assert_eq!(updated.base.tags, vec!["tag2".to_string(), "tag3".to_string()]);
+        assert_eq!(
+            updated.base.tags,
+            vec!["tag2".to_string(), "tag3".to_string()]
+        );
     }
 
     #[test]

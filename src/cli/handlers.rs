@@ -4,10 +4,96 @@ use std::path::PathBuf;
 
 use crate::cache::SqliteCache;
 use crate::entity::{
-    Component, Decision, DecisionStatus, Link, Note, Prompt, Relation, RelationType, Task,
+    Component, ComponentStatus, Decision, DecisionStatus, Link, Note, Prompt, Relation,
+    RelationType, Task, TaskStatus,
 };
 use crate::error::{MedullaError, Result};
-use crate::storage::{DecisionUpdate, LoroStore};
+use crate::storage::{
+    ComponentUpdate, DecisionUpdate, LinkUpdate, LoroStore, NoteUpdate, PromptUpdate, TaskUpdate,
+};
+
+/// Reference to any entity type in the system
+#[derive(Clone)]
+enum EntityRef {
+    Decision(Decision),
+    Task(Task),
+    Note(Note),
+    Prompt(Prompt),
+    Component(Component),
+    Link(Link),
+}
+
+/// Find an entity by ID (sequence number or UUID prefix) across all entity types
+fn find_entity_by_id(store: &LoroStore, id: &str) -> Result<EntityRef> {
+    // Try to parse as sequence number first
+    if let Ok(seq) = id.parse::<u32>() {
+        // Search through all entity types by sequence number
+        for decision in store.list_decisions()? {
+            if decision.base.sequence_number == seq {
+                return Ok(EntityRef::Decision(decision));
+            }
+        }
+        for task in store.list_tasks()? {
+            if task.base.sequence_number == seq {
+                return Ok(EntityRef::Task(task));
+            }
+        }
+        for note in store.list_notes()? {
+            if note.base.sequence_number == seq {
+                return Ok(EntityRef::Note(note));
+            }
+        }
+        for prompt in store.list_prompts()? {
+            if prompt.base.sequence_number == seq {
+                return Ok(EntityRef::Prompt(prompt));
+            }
+        }
+        for component in store.list_components()? {
+            if component.base.sequence_number == seq {
+                return Ok(EntityRef::Component(component));
+            }
+        }
+        for link in store.list_links()? {
+            if link.base.sequence_number == seq {
+                return Ok(EntityRef::Link(link));
+            }
+        }
+    } else {
+        // Search by UUID prefix
+        for decision in store.list_decisions()? {
+            if decision.base.id.to_string().starts_with(id) {
+                return Ok(EntityRef::Decision(decision));
+            }
+        }
+        for task in store.list_tasks()? {
+            if task.base.id.to_string().starts_with(id) {
+                return Ok(EntityRef::Task(task));
+            }
+        }
+        for note in store.list_notes()? {
+            if note.base.id.to_string().starts_with(id) {
+                return Ok(EntityRef::Note(note));
+            }
+        }
+        for prompt in store.list_prompts()? {
+            if prompt.base.id.to_string().starts_with(id) {
+                return Ok(EntityRef::Prompt(prompt));
+            }
+        }
+        for component in store.list_components()? {
+            if component.base.id.to_string().starts_with(id) {
+                return Ok(EntityRef::Component(component));
+            }
+        }
+        for link in store.list_links()? {
+            if link.base.id.to_string().starts_with(id) {
+                return Ok(EntityRef::Link(link));
+            }
+        }
+    }
+
+    Err(MedullaError::EntityNotFound(id.to_string()))
+}
 
 /// Find the project root by looking for .medulla/ or .git/
 fn find_project_root() -> PathBuf {
@@ -300,7 +386,13 @@ pub fn handle_add_component(
     component.base.created_by = git_author.clone();
 
     store.add_component(&component)?;
-    add_relations_for_entity(&store, component.base.id, "component", &relations, &git_author)?;
+    add_relations_for_entity(
+        &store,
+        component.base.id,
+        "component",
+        &relations,
+        &git_author,
+    )?;
     store.save()?;
 
     if json {
@@ -424,7 +516,10 @@ pub fn handle_list(entity_type: Option<String>, json: bool) -> Result<()> {
             } else {
                 println!("Tasks:\n");
                 for t in tasks {
-                    let due_str = t.due_date.map(|d| format!(" due:{}", d)).unwrap_or_default();
+                    let due_str = t
+                        .due_date
+                        .map(|d| format!(" due:{}", d))
+                        .unwrap_or_default();
                     println!(
                         "  {:03} ({}) [{}|{}]{} {}",
                         t.base.sequence_number,
@@ -606,9 +701,8 @@ fn parse_relation_string(s: &str) -> Result<(RelationType, uuid::Uuid)> {
         .parse()
         .map_err(|e: String| MedullaError::Storage(e))?;
 
-    let target_id = uuid::Uuid::parse_str(parts[1]).map_err(|_| {
-        MedullaError::Storage(format!("Invalid UUID in relation: {}", parts[1]))
-    })?;
+    let target_id = uuid::Uuid::parse_str(parts[1])
+        .map_err(|_| MedullaError::Storage(format!("Invalid UUID in relation: {}", parts[1])))?;
 
     Ok((rel_type, target_id))
 }
@@ -627,84 +721,231 @@ pub fn handle_update(
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
 
-    // Find the decision by ID
-    let decisions = store.list_decisions()?;
-    let decision = if let Ok(seq) = id.parse::<u32>() {
-        decisions.iter().find(|d| d.base.sequence_number == seq)
-    } else {
-        decisions
-            .iter()
-            .find(|d| d.base.id.to_string().starts_with(&id))
-    };
-
-    let decision = match decision {
-        Some(d) => d.clone(),
-        None => return Err(MedullaError::EntityNotFound(id)),
-    };
-
-    // Build update payload
-    let mut updates = DecisionUpdate::default();
-    updates.title = title;
-    updates.status = status.and_then(|s| s.parse::<DecisionStatus>().ok());
-    updates.add_tags = tags;
-    updates.remove_tags = remove_tags;
-
-    // Read content from stdin if requested
-    if stdin {
-        let mut content = String::new();
-        io::stdin().read_to_string(&mut content)?;
-        if !content.is_empty() {
-            updates.content = Some(content);
-        }
-    }
+    // Find the entity by ID across all types
+    let entity = find_entity_by_id(&store, &id)?;
 
     // TODO: Handle --edit flag (Phase 4)
     if edit {
         eprintln!("Warning: --edit flag not yet implemented, skipping");
     }
 
-    // Apply updates
-    store.update_decision(&decision.base.id, updates)?;
-
-    // Handle new relations
     let git_author = get_git_author();
-    for rel_str in &relations {
-        match parse_relation_string(rel_str) {
-            Ok((rel_type, target_id)) => {
-                let mut relation = Relation::new(
-                    decision.base.id,
-                    "decision".to_string(),
-                    target_id,
-                    "unknown".to_string(),
-                    rel_type,
-                );
-                relation.created_by = git_author.clone();
-                if let Err(e) = store.add_relation(&relation) {
-                    eprintln!("Warning: failed to add relation '{}': {}", rel_str, e);
+
+    // Handle updates based on entity type
+    match entity {
+        EntityRef::Decision(decision) => {
+            let mut updates = DecisionUpdate::default();
+            updates.title = title;
+            updates.status = status.and_then(|s| s.parse::<DecisionStatus>().ok());
+            updates.add_tags = tags;
+            updates.remove_tags = remove_tags;
+
+            if stdin {
+                let mut content = String::new();
+                io::stdin().read_to_string(&mut content)?;
+                if !content.is_empty() {
+                    updates.content = Some(content);
                 }
             }
-            Err(e) => {
-                eprintln!("Warning: invalid relation '{}': {}", rel_str, e);
+
+            store.update_decision(&decision.base.id, updates)?;
+            add_relations_for_entity(
+                &store,
+                decision.base.id,
+                "decision",
+                &relations,
+                &git_author,
+            )?;
+            store.save()?;
+
+            let updated = store.get_decision(&decision.base.id)?.ok_or_else(|| {
+                MedullaError::Storage("Failed to retrieve updated decision".to_string())
+            })?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&updated)?);
+            } else {
+                println!(
+                    "Updated decision {:03} ({}) - {}",
+                    updated.base.sequence_number,
+                    &updated.base.id.to_string()[..7],
+                    updated.base.title
+                );
             }
         }
-    }
+        EntityRef::Task(task) => {
+            let mut updates = TaskUpdate::default();
+            updates.title = title;
+            updates.status = status.and_then(|s| s.parse::<TaskStatus>().ok());
+            updates.add_tags = tags;
+            updates.remove_tags = remove_tags;
 
-    store.save()?;
+            if stdin {
+                let mut content = String::new();
+                io::stdin().read_to_string(&mut content)?;
+                if !content.is_empty() {
+                    updates.content = Some(content);
+                }
+            }
 
-    // Get the updated decision
-    let updated = store.get_decision(&decision.base.id)?.ok_or_else(|| {
-        MedullaError::Storage("Failed to retrieve updated decision".to_string())
-    })?;
+            store.update_task(&task.base.id, updates)?;
+            add_relations_for_entity(&store, task.base.id, "task", &relations, &git_author)?;
+            store.save()?;
 
-    if json {
-        println!("{}", serde_json::to_string_pretty(&updated)?);
-    } else {
-        println!(
-            "Updated decision {:03} ({}) - {}",
-            updated.base.sequence_number,
-            &updated.base.id.to_string()[..7],
-            updated.base.title
-        );
+            let updated = store.get_task(&task.base.id)?.ok_or_else(|| {
+                MedullaError::Storage("Failed to retrieve updated task".to_string())
+            })?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&updated)?);
+            } else {
+                println!(
+                    "Updated task {:03} ({}) - {}",
+                    updated.base.sequence_number,
+                    &updated.base.id.to_string()[..7],
+                    updated.base.title
+                );
+            }
+        }
+        EntityRef::Note(note) => {
+            let mut updates = NoteUpdate::default();
+            updates.title = title;
+            updates.add_tags = tags;
+            updates.remove_tags = remove_tags;
+
+            if stdin {
+                let mut content = String::new();
+                io::stdin().read_to_string(&mut content)?;
+                if !content.is_empty() {
+                    updates.content = Some(content);
+                }
+            }
+
+            store.update_note(&note.base.id, updates)?;
+            add_relations_for_entity(&store, note.base.id, "note", &relations, &git_author)?;
+            store.save()?;
+
+            let updated = store.get_note(&note.base.id)?.ok_or_else(|| {
+                MedullaError::Storage("Failed to retrieve updated note".to_string())
+            })?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&updated)?);
+            } else {
+                println!(
+                    "Updated note {:03} ({}) - {}",
+                    updated.base.sequence_number,
+                    &updated.base.id.to_string()[..7],
+                    updated.base.title
+                );
+            }
+        }
+        EntityRef::Prompt(prompt) => {
+            let mut updates = PromptUpdate::default();
+            updates.title = title;
+            updates.add_tags = tags;
+            updates.remove_tags = remove_tags;
+
+            if stdin {
+                let mut content = String::new();
+                io::stdin().read_to_string(&mut content)?;
+                if !content.is_empty() {
+                    updates.content = Some(content);
+                }
+            }
+
+            store.update_prompt(&prompt.base.id, updates)?;
+            add_relations_for_entity(&store, prompt.base.id, "prompt", &relations, &git_author)?;
+            store.save()?;
+
+            let updated = store.get_prompt(&prompt.base.id)?.ok_or_else(|| {
+                MedullaError::Storage("Failed to retrieve updated prompt".to_string())
+            })?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&updated)?);
+            } else {
+                println!(
+                    "Updated prompt {:03} ({}) - {}",
+                    updated.base.sequence_number,
+                    &updated.base.id.to_string()[..7],
+                    updated.base.title
+                );
+            }
+        }
+        EntityRef::Component(component) => {
+            let mut updates = ComponentUpdate::default();
+            updates.title = title;
+            updates.status = status.and_then(|s| s.parse::<ComponentStatus>().ok());
+            updates.add_tags = tags;
+            updates.remove_tags = remove_tags;
+
+            if stdin {
+                let mut content = String::new();
+                io::stdin().read_to_string(&mut content)?;
+                if !content.is_empty() {
+                    updates.content = Some(content);
+                }
+            }
+
+            store.update_component(&component.base.id, updates)?;
+            add_relations_for_entity(
+                &store,
+                component.base.id,
+                "component",
+                &relations,
+                &git_author,
+            )?;
+            store.save()?;
+
+            let updated = store.get_component(&component.base.id)?.ok_or_else(|| {
+                MedullaError::Storage("Failed to retrieve updated component".to_string())
+            })?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&updated)?);
+            } else {
+                println!(
+                    "Updated component {:03} ({}) - {}",
+                    updated.base.sequence_number,
+                    &updated.base.id.to_string()[..7],
+                    updated.base.title
+                );
+            }
+        }
+        EntityRef::Link(link) => {
+            let mut updates = LinkUpdate::default();
+            updates.title = title;
+            updates.add_tags = tags;
+            updates.remove_tags = remove_tags;
+
+            if stdin {
+                let mut content = String::new();
+                io::stdin().read_to_string(&mut content)?;
+                if !content.is_empty() {
+                    updates.content = Some(content);
+                }
+            }
+
+            store.update_link(&link.base.id, updates)?;
+            add_relations_for_entity(&store, link.base.id, "link", &relations, &git_author)?;
+            store.save()?;
+
+            let updated = store.get_link(&link.base.id)?.ok_or_else(|| {
+                MedullaError::Storage("Failed to retrieve updated link".to_string())
+            })?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&updated)?);
+            } else {
+                println!(
+                    "Updated link {:03} ({}) - {}",
+                    updated.base.sequence_number,
+                    &updated.base.id.to_string()[..7],
+                    updated.base.title
+                );
+            }
+        }
     }
 
     Ok(())
@@ -714,28 +955,57 @@ pub fn handle_delete(id: String, force: bool) -> Result<()> {
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
 
-    // Find the decision by ID
-    let decisions = store.list_decisions()?;
-    let decision = if let Ok(seq) = id.parse::<u32>() {
-        decisions.iter().find(|d| d.base.sequence_number == seq)
-    } else {
-        decisions
-            .iter()
-            .find(|d| d.base.id.to_string().starts_with(&id))
-    };
+    // Find the entity by ID across all types
+    let entity = find_entity_by_id(&store, &id)?;
 
-    let decision = match decision {
-        Some(d) => d.clone(),
-        None => return Err(MedullaError::EntityNotFound(id)),
+    // Extract entity info for confirmation message
+    let (entity_id, entity_type, title, sequence_number) = match &entity {
+        EntityRef::Decision(d) => (
+            d.base.id,
+            "decision",
+            d.base.title.clone(),
+            d.base.sequence_number,
+        ),
+        EntityRef::Task(t) => (
+            t.base.id,
+            "task",
+            t.base.title.clone(),
+            t.base.sequence_number,
+        ),
+        EntityRef::Note(n) => (
+            n.base.id,
+            "note",
+            n.base.title.clone(),
+            n.base.sequence_number,
+        ),
+        EntityRef::Prompt(p) => (
+            p.base.id,
+            "prompt",
+            p.base.title.clone(),
+            p.base.sequence_number,
+        ),
+        EntityRef::Component(c) => (
+            c.base.id,
+            "component",
+            c.base.title.clone(),
+            c.base.sequence_number,
+        ),
+        EntityRef::Link(l) => (
+            l.base.id,
+            "link",
+            l.base.title.clone(),
+            l.base.sequence_number,
+        ),
     };
 
     // Confirm deletion unless --force is used
     if !force {
         eprintln!(
-            "Delete decision {:03} ({}) - {}? [y/N] ",
-            decision.base.sequence_number,
-            &decision.base.id.to_string()[..7],
-            decision.base.title
+            "Delete {} {:03} ({}) - {}? [y/N] ",
+            entity_type,
+            sequence_number,
+            &entity_id.to_string()[..7],
+            title
         );
 
         // Check if stdin is a tty for interactive confirmation
@@ -757,7 +1027,7 @@ pub fn handle_delete(id: String, force: bool) -> Result<()> {
     // Delete any relations involving this entity
     let relations = store.list_relations()?;
     for rel in relations {
-        if rel.source_id == decision.base.id || rel.target_id == decision.base.id {
+        if rel.source_id == entity_id || rel.target_id == entity_id {
             let _ = store.delete_relation(
                 &rel.source_id.to_string(),
                 &rel.relation_type.to_string(),
@@ -766,15 +1036,24 @@ pub fn handle_delete(id: String, force: bool) -> Result<()> {
         }
     }
 
-    // Delete the decision
-    store.delete_decision(&decision.base.id)?;
+    // Delete the entity based on its type
+    match entity {
+        EntityRef::Decision(_) => store.delete_decision(&entity_id)?,
+        EntityRef::Task(_) => store.delete_task(&entity_id)?,
+        EntityRef::Note(_) => store.delete_note(&entity_id)?,
+        EntityRef::Prompt(_) => store.delete_prompt(&entity_id)?,
+        EntityRef::Component(_) => store.delete_component(&entity_id)?,
+        EntityRef::Link(_) => store.delete_link(&entity_id)?,
+    }
+
     store.save()?;
 
     println!(
-        "Deleted decision {:03} ({}) - {}",
-        decision.base.sequence_number,
-        &decision.base.id.to_string()[..7],
-        decision.base.title
+        "Deleted {} {:03} ({}) - {}",
+        entity_type,
+        sequence_number,
+        &entity_id.to_string()[..7],
+        title
     );
 
     Ok(())
@@ -788,27 +1067,71 @@ pub fn handle_search(query: String, json: bool) -> Result<()> {
     // Sync cache with store
     store.sync_cache(&cache)?;
 
-    // Perform search
-    let results = cache.search_decisions(&query)?;
+    // Perform search across all entity types
+    let results = cache.search_all(&query, 50)?;
 
     if json {
         #[derive(serde::Serialize)]
         struct SearchResultJson {
+            entity_type: String,
             id: String,
             sequence_number: u32,
             title: String,
-            status: String,
+            status: Option<String>,
             snippet: Option<String>,
         }
 
         let json_results: Vec<SearchResultJson> = results
             .into_iter()
-            .map(|r| SearchResultJson {
-                id: r.id,
-                sequence_number: r.sequence_number,
-                title: r.title,
-                status: r.status,
-                snippet: r.content_snippet,
+            .map(|r| match r {
+                crate::cache::SearchResult::Decision(d) => SearchResultJson {
+                    entity_type: "decision".to_string(),
+                    id: d.id,
+                    sequence_number: d.sequence_number,
+                    title: d.title,
+                    status: Some(d.status),
+                    snippet: d.content_snippet,
+                },
+                crate::cache::SearchResult::Task(t) => SearchResultJson {
+                    entity_type: "task".to_string(),
+                    id: t.id,
+                    sequence_number: t.sequence_number,
+                    title: t.title,
+                    status: Some(t.status),
+                    snippet: t.content_snippet,
+                },
+                crate::cache::SearchResult::Note(n) => SearchResultJson {
+                    entity_type: "note".to_string(),
+                    id: n.id,
+                    sequence_number: n.sequence_number,
+                    title: n.title,
+                    status: n.note_type,
+                    snippet: n.content_snippet,
+                },
+                crate::cache::SearchResult::Prompt(p) => SearchResultJson {
+                    entity_type: "prompt".to_string(),
+                    id: p.id,
+                    sequence_number: p.sequence_number,
+                    title: p.title,
+                    status: None,
+                    snippet: p.content_snippet,
+                },
+                crate::cache::SearchResult::Component(c) => SearchResultJson {
+                    entity_type: "component".to_string(),
+                    id: c.id,
+                    sequence_number: c.sequence_number,
+                    title: c.title,
+                    status: Some(c.status),
+                    snippet: c.content_snippet,
+                },
+                crate::cache::SearchResult::Link(l) => SearchResultJson {
+                    entity_type: "link".to_string(),
+                    id: l.id,
+                    sequence_number: l.sequence_number,
+                    title: l.title,
+                    status: l.link_type,
+                    snippet: l.content_snippet,
+                },
             })
             .collect();
 
@@ -818,19 +1141,109 @@ pub fn handle_search(query: String, json: bool) -> Result<()> {
     } else {
         println!("Search results for '{}':\n", query);
         for r in results {
-            println!(
-                "  {:03} ({}) [{}] {}",
-                r.sequence_number,
-                &r.id[..7.min(r.id.len())],
-                r.status,
-                r.title
-            );
-            if let Some(snippet) = r.content_snippet {
-                // Clean up FTS5 snippet
-                let clean_snippet = snippet
-                    .replace("<mark>", "\x1b[1m")
-                    .replace("</mark>", "\x1b[0m");
-                println!("      {}", clean_snippet);
+            match r {
+                crate::cache::SearchResult::Decision(d) => {
+                    println!(
+                        "  [DECISION] {:03} ({}) [{}] {}",
+                        d.sequence_number,
+                        &d.id[..7.min(d.id.len())],
+                        d.status,
+                        d.title
+                    );
+                    if let Some(snippet) = d.content_snippet {
+                        let clean_snippet = snippet
+                            .replace("<mark>", "\x1b[1m")
+                            .replace("</mark>", "\x1b[0m");
+                        println!("      {}", clean_snippet);
+                    }
+                }
+                crate::cache::SearchResult::Task(t) => {
+                    println!(
+                        "  [TASK] {:03} ({}) [{}|{}] {}",
+                        t.sequence_number,
+                        &t.id[..7.min(t.id.len())],
+                        t.status,
+                        t.priority,
+                        t.title
+                    );
+                    if let Some(assignee) = t.assignee {
+                        println!("      assignee: {}", assignee);
+                    }
+                    if let Some(snippet) = t.content_snippet {
+                        let clean_snippet = snippet
+                            .replace("<mark>", "\x1b[1m")
+                            .replace("</mark>", "\x1b[0m");
+                        println!("      {}", clean_snippet);
+                    }
+                }
+                crate::cache::SearchResult::Note(n) => {
+                    let type_str = n.note_type.as_deref().unwrap_or("note");
+                    println!(
+                        "  [NOTE] {:03} ({}) [{}] {}",
+                        n.sequence_number,
+                        &n.id[..7.min(n.id.len())],
+                        type_str,
+                        n.title
+                    );
+                    if let Some(snippet) = n.content_snippet {
+                        let clean_snippet = snippet
+                            .replace("<mark>", "\x1b[1m")
+                            .replace("</mark>", "\x1b[0m");
+                        println!("      {}", clean_snippet);
+                    }
+                }
+                crate::cache::SearchResult::Prompt(p) => {
+                    println!(
+                        "  [PROMPT] {:03} ({}) {}",
+                        p.sequence_number,
+                        &p.id[..7.min(p.id.len())],
+                        p.title
+                    );
+                    if !p.variables.is_empty() {
+                        println!("      vars: {}", p.variables.join(", "));
+                    }
+                    if let Some(snippet) = p.content_snippet {
+                        let clean_snippet = snippet
+                            .replace("<mark>", "\x1b[1m")
+                            .replace("</mark>", "\x1b[0m");
+                        println!("      {}", clean_snippet);
+                    }
+                }
+                crate::cache::SearchResult::Component(c) => {
+                    let type_str = c.component_type.as_deref().unwrap_or("component");
+                    println!(
+                        "  [COMPONENT] {:03} ({}) [{}|{}] {}",
+                        c.sequence_number,
+                        &c.id[..7.min(c.id.len())],
+                        type_str,
+                        c.status,
+                        c.title
+                    );
+                    if let Some(owner) = c.owner {
+                        println!("      owner: {}", owner);
+                    }
+                    if let Some(snippet) = c.content_snippet {
+                        let clean_snippet = snippet
+                            .replace("<mark>", "\x1b[1m")
+                            .replace("</mark>", "\x1b[0m");
+                        println!("      {}", clean_snippet);
+                    }
+                }
+                crate::cache::SearchResult::Link(l) => {
+                    println!(
+                        "  [LINK] {:03} ({}) {} -> {}",
+                        l.sequence_number,
+                        &l.id[..7.min(l.id.len())],
+                        l.title,
+                        l.url
+                    );
+                    if let Some(snippet) = l.content_snippet {
+                        let clean_snippet = snippet
+                            .replace("<mark>", "\x1b[1m")
+                            .replace("</mark>", "\x1b[0m");
+                        println!("      {}", clean_snippet);
+                    }
+                }
             }
         }
     }
