@@ -10,7 +10,9 @@
 
 > 🚧 **Beta**: Medulla is actively being developed. We'd love for you to try it out and [report any issues](https://github.com/skeletor-js/medulla/issues) you find!
 
-A git-native, AI-accessible knowledge engine for software projects.
+A **free, open-source**, git-native knowledge engine for software projects.
+
+No subscriptions. No cloud dependencies. Your data stays in your repo.
 
 ## What is Medulla?
 
@@ -24,6 +26,21 @@ Unlike static files like `CLAUDE.md` or `.cursorrules`, Medulla provides:
 - **Structured types**: Decisions, tasks, prompts with schemas
 - **Conflict-free sync**: CRDT-based, merges cleanly across branches
 - **Human-readable snapshots**: Auto-generated markdown for GitHub browsing
+
+## Who is this for?
+
+Medulla is designed for teams who:
+
+- **Use AI assistants heavily** (Claude Code, Cursor, Copilot) and feel the pain of context loss between sessions
+- **Already maintain documentation** but want it to be queryable and AI-accessible
+- **Work across multiple branches** and need decisions that merge cleanly
+- **Are tired of subscription fees** for AI context/memory tools and want a free, self-hosted alternative
+
+**This might not be for you if:**
+
+- You're happy with GitHub Issues + markdown files and don't struggle with AI context management
+- Your team doesn't already write any project documentation
+- You rarely use AI coding assistants
 
 ## Installation
 
@@ -40,12 +57,6 @@ npm install -g medulla-cc
 ```
 
 The NPM package automatically downloads the appropriate binary for your platform (macOS, Linux, Windows on x64 and ARM64).
-
-### Homebrew (Coming Soon)
-
-```bash
-brew install medulla
-```
 
 ### From Source
 
@@ -147,36 +158,77 @@ Access your data via URI templates:
 - `medulla://entity/{id}` — Single entity
 - `medulla://context/{topic}` — Semantic search results
 
+## FAQ
+
+**Q: How is this better than just writing ADRs in markdown?**
+
+ADRs are great for humans but terrible for AI assistants—they can't query them, search semantically, or understand relationships. Medulla captures the same information in a structured format that both humans and AI can use.
+
+**Q: Isn't this just another thing to maintain?**
+
+Initially, yes. But once set up, the pre-commit hook auto-generates human-readable snapshots. The real question is: do you value AI-accessible project knowledge enough to invest 30 seconds per decision?
+
+**Q: Why not use a paid AI context/memory service?**
+
+Most AI context tools charge monthly subscriptions and store your data in their cloud. Medulla is free, open-source, and lives entirely in your git repo. Your data stays yours—forever accessible, even if the company behind it disappears.
+
+**Q: What if MCP doesn't become the standard?**
+
+Medulla's CLI and markdown snapshots work independently of MCP. If the protocol landscape changes, your data remains accessible via git and the command line.
+
 ## Why Medulla?
+
+We built this because we were frustrated. Here's where it helps:
 
 ### The Problem
 
-AI assistants forget project decisions between sessions. Static markdown files can't be queried or filtered. Traditional markdown files conflict when edited on multiple branches.
+**Problem 1: Context loss between AI sessions**
 
-### The Solution
+AI assistants forget what you discussed yesterday. You end up re-explaining the same architecture decisions over and over.
 
-Medulla captures decisions as queryable, searchable data:
+**Problem 2: Finding old decisions is painful**
+
+Without Medulla:
 
 ```bash
-# Capture a decision with context
-medulla add decision "Use Rust over TypeScript" \
-  --status accepted \
-  --tag architecture \
-  --context "Single binary distribution, first-class Loro support"
-
-# Future sessions can find it
-medulla search "why Rust"
-medulla search --semantic "technology choice"
+# Searching project context the hard way
+git log --all --oneline --grep="authentication"
+grep -r "auth" docs/adr/
+# Hope you remember which PR discussed JWT vs sessions
 ```
+
+With Medulla:
+
+```bash
+# Queryable knowledge at your fingertips
+medulla search "why JWT over sessions"
+medulla search --semantic "authentication decisions"
+medulla get 1  # Shows full context, rationale, and consequences
+```
+
+**Problem 3: Merge conflicts in documentation**
+
+Editing ADRs on multiple branches causes conflicts. CRDTs solve this automatically—your decisions merge cleanly regardless of when or where they were edited.
+
+**When NOT to use Medulla:**
+
+- If you rarely use AI coding assistants
+- If your team doesn't already write documentation
+- If GitHub Issues covers all your needs perfectly
+
+We think it's worth trying if AI context loss frustrates you regularly.
 
 ### Comparison
 
-| Solution | Queryable? | Semantic Search? | MCP? | Merge-safe? |
-|----------|------------|------------------|------|-------------|
-| CLAUDE.md | As raw text | No | No | No |
-| ADRs (Log4brains) | No | No | No | No |
-| GitHub Issues | Via API | No | Via MCP | N/A |
-| **Medulla** | **Yes** | **Yes** | **Native** | **Yes** |
+| Solution | Queryable? | Semantic Search? | MCP? | Merge-safe? | Cost |
+|----------|------------|------------------|------|-------------|------|
+| CLAUDE.md | As raw text | No | No | No | Free |
+| ADRs (Log4brains) | No | No | No | No | Free |
+| GitHub Issues | Via API | No | Via MCP | N/A | Free* |
+| Notion/Obsidian | Limited | No | No | No | Subscription |
+| **Medulla** | **Yes** | **Yes** | **Native** | **Yes** | **Free** |
+
+*GitHub Issues is free for public repos; paid features for private repos at scale
 
 ## Git Integration
 

@@ -10,3 +10,7 @@ Cargo.lock
 
 # Embedding model cache
 .fastembed_cache/
+
+# Internal docs
+docs/branding/
+docs/plans/
