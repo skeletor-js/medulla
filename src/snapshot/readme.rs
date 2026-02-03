@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::entity::{Decision, Task, Note, Prompt, Component, Link, TaskStatus};
+use crate::entity::{Component, Decision, TaskStatus};
 use crate::storage::LoroStore;
 use crate::Result;
 
