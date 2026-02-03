@@ -5,6 +5,7 @@ pub mod entity;
 pub mod error;
 pub mod mcp;
 pub mod search;
+pub mod snapshot;
 pub mod storage;
 pub mod warnings;
 
