@@ -103,6 +103,50 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Task queue commands (ready, blocked, next)
+    Tasks(TasksCommand),
+
+    /// Start the MCP server
+    Serve,
+}
+
+#[derive(Args, Debug)]
+pub struct TasksCommand {
+    #[command(subcommand)]
+    pub action: TasksAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TasksAction {
+    /// List tasks with no unresolved blockers (ready to work on)
+    Ready {
+        /// Maximum number of tasks to show
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: u32,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show the single highest-priority ready task
+    Next {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List blocked tasks and what blocks them
+    Blocked {
+        /// Task ID to show blockers for (optional, shows all blocked tasks if omitted)
+        #[arg(value_name = "ID")]
+        id: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Args, Debug)]

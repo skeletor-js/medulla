@@ -2,7 +2,8 @@ use clap::Parser;
 use medulla::cli::{
     handle_add_component, handle_add_decision, handle_add_link, handle_add_note, handle_add_prompt,
     handle_add_task, handle_delete, handle_get, handle_init, handle_list, handle_search,
-    handle_update, AddEntity, Cli, Commands,
+    handle_serve, handle_tasks_blocked, handle_tasks_next, handle_tasks_ready, handle_update,
+    AddEntity, Cli, Commands, TasksAction,
 };
 
 fn main() {
@@ -82,6 +83,12 @@ fn main() {
         } => handle_update(id, title, status, tags, remove_tags, relations, stdin, edit, json),
         Commands::Delete { id, force } => handle_delete(id, force),
         Commands::Search { query, json } => handle_search(query, json),
+        Commands::Tasks(tasks_cmd) => match tasks_cmd.action {
+            TasksAction::Ready { limit, json } => handle_tasks_ready(limit, json),
+            TasksAction::Next { json } => handle_tasks_next(json),
+            TasksAction::Blocked { id, json } => handle_tasks_blocked(id, json),
+        },
+        Commands::Serve => handle_serve(),
     };
 
     if let Err(e) = result {

@@ -112,6 +112,20 @@ impl MedullaServer {
         }
     }
 
+    /// Start the MCP server on the given transport.
+    ///
+    /// This method runs the server until the transport is closed or an error occurs.
+    pub async fn serve<T, E, A>(self, transport: T) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        T: rmcp::transport::IntoTransport<RoleServer, E, A>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        use rmcp::service::ServiceExt;
+        let running = ServiceExt::serve(self, transport).await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        running.waiting().await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        Ok(())
+    }
+
     /// Ping tool for health checks.
     #[tool(description = "Check if the server is running")]
     async fn ping(&self) -> Result<CallToolResult, McpErrorData> {

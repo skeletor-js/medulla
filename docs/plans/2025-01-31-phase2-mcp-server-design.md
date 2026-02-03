@@ -1,8 +1,8 @@
 # Phase 2: MCP Server Design
 
 **Date**: 2025-01-31
-**Updated**: 2026-02-02
-**Status**: Approved
+**Updated**: 2026-02-03
+**Status**: In Progress (Batch 7 Complete)
 
 ## Overview
 
@@ -834,11 +834,19 @@ All Phase 1 entity types are now implemented:
 - `RawResource` converted to `Resource` (Annotated wrapper) using `.no_annotation()`
 - Subscription state managed via `SubscriptionState` in `MedullaServer`
 
-#### Batch 7: CLI Integration
+#### Batch 7: CLI Integration ✓ COMPLETE (2026-02-03)
 
-- [ ] Add CLI commands:
+- [x] Add CLI commands:
   - `medulla serve` (MCP server with graceful shutdown)
   - `medulla tasks ready`, `medulla tasks next`, `medulla tasks blocked`
+
+**Key implementation notes:**
+
+- `medulla serve` starts the MCP server on stdio transport with graceful shutdown on SIGINT/SIGTERM
+- Server logs to stderr (stdout reserved for MCP protocol)
+- Task queue commands use SqliteCache methods implemented in Batch 2
+- `medulla tasks blocked <id>` shows blockers for a specific task, or all blocked tasks if no ID given
+- All 72 tests pass (61 unit + 11 integration)
 
 #### Batch 8: Testing
 

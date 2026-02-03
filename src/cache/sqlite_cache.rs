@@ -1252,7 +1252,7 @@ pub struct CachedRelation {
 }
 
 /// A task that is ready to work on (no unresolved blockers)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ReadyTask {
     pub id: String,
     pub sequence_number: u32,
@@ -1264,7 +1264,7 @@ pub struct ReadyTask {
 }
 
 /// A blocked task with information about what blocks it
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BlockedTask {
     pub id: String,
     pub sequence_number: u32,
@@ -1277,7 +1277,7 @@ pub struct BlockedTask {
 }
 
 /// Information about a task that blocks another task
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TaskBlocker {
     pub id: String,
     pub sequence_number: u32,
