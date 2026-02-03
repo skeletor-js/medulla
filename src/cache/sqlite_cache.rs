@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::entity::{Component, Decision, Link, Note, Prompt, Relation, Task};
@@ -387,6 +388,24 @@ impl SqliteCache {
             [],
         )?;
 
+        // Embeddings table for semantic search
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS embeddings (
+                entity_id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                text_hash TEXT NOT NULL,
+                computed_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // Index for filtering embeddings by type
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_embeddings_type ON embeddings(entity_type)",
+            [],
+        )?;
+
         Ok(())
     }
 
@@ -643,8 +662,215 @@ impl SqliteCache {
         self.conn.execute("DELETE FROM components", [])?;
         self.conn.execute("DELETE FROM links", [])?;
         self.conn.execute("DELETE FROM relations", [])?;
+        self.conn.execute("DELETE FROM embeddings", [])?;
         self.conn.execute("DELETE FROM meta", [])?;
         Ok(())
+    }
+
+    // =========================================================================
+    // Embedding Storage Methods
+    // =========================================================================
+
+    /// Store an embedding for an entity.
+    /// The embedding is stored as a BLOB (f32 array serialized as bytes).
+    pub fn store_embedding(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+        embedding: &[f32],
+        text_hash: &str,
+    ) -> Result<()> {
+        // Convert f32 array to bytes
+        let embedding_bytes = embedding_to_bytes(embedding);
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO embeddings
+             (entity_id, entity_type, embedding, text_hash, computed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                entity_id,
+                entity_type,
+                embedding_bytes,
+                text_hash,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get an embedding for an entity.
+    /// Returns None if no embedding exists.
+    pub fn get_embedding(&self, entity_id: &str) -> Result<Option<Vec<f32>>> {
+        let result: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT embedding FROM embeddings WHERE entity_id = ?1",
+                [entity_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        Ok(result.map(|bytes| bytes_to_embedding(&bytes)))
+    }
+
+    /// Get the text hash for an entity's embedding.
+    /// Used to check if content has changed and embedding needs recomputing.
+    pub fn get_embedding_text_hash(&self, entity_id: &str) -> Result<Option<String>> {
+        let result: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT text_hash FROM embeddings WHERE entity_id = ?1",
+                [entity_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    /// Delete an embedding for an entity.
+    pub fn delete_embedding(&self, entity_id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM embeddings WHERE entity_id = ?1", [entity_id])?;
+        Ok(())
+    }
+
+    /// List all embeddings for a specific entity type.
+    /// Returns tuples of (entity_id, embedding).
+    pub fn list_embeddings_by_type(&self, entity_type: &str) -> Result<Vec<(String, Vec<f32>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT entity_id, embedding FROM embeddings WHERE entity_type = ?1",
+        )?;
+
+        let results = stmt
+            .query_map([entity_type], |row| {
+                let entity_id: String = row.get(0)?;
+                let embedding_bytes: Vec<u8> = row.get(1)?;
+                Ok((entity_id, bytes_to_embedding(&embedding_bytes)))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    /// List all embeddings (optionally filtered by type).
+    /// Returns tuples of (entity_id, entity_type, embedding).
+    pub fn list_all_embeddings(
+        &self,
+        entity_type: Option<&str>,
+    ) -> Result<Vec<(String, String, Vec<f32>)>> {
+        if let Some(etype) = entity_type {
+            let mut stmt = self.conn.prepare(
+                "SELECT entity_id, entity_type, embedding FROM embeddings WHERE entity_type = ?1",
+            )?;
+            let results = stmt
+                .query_map([etype], |row| {
+                    let entity_id: String = row.get(0)?;
+                    let entity_type: String = row.get(1)?;
+                    let embedding_bytes: Vec<u8> = row.get(2)?;
+                    Ok((entity_id, entity_type, bytes_to_embedding(&embedding_bytes)))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(results)
+        } else {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT entity_id, entity_type, embedding FROM embeddings")?;
+            let results = stmt
+                .query_map([], |row| {
+                    let entity_id: String = row.get(0)?;
+                    let entity_type: String = row.get(1)?;
+                    let embedding_bytes: Vec<u8> = row.get(2)?;
+                    Ok((entity_id, entity_type, bytes_to_embedding(&embedding_bytes)))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(results)
+        }
+    }
+
+    /// Get the count of embeddings in the cache.
+    pub fn count_embeddings(&self) -> Result<usize> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// Get cache statistics for monitoring and threshold warnings.
+    pub fn get_stats(&self) -> Result<CacheStats> {
+        let decisions: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM decisions", [], |row| row.get(0))?;
+        let tasks: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))?;
+        let notes: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM notes", [], |row| row.get(0))?;
+        let prompts: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM prompts", [], |row| row.get(0))?;
+        let components: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM components", [], |row| row.get(0))?;
+        let links: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM links", [], |row| row.get(0))?;
+        let relations: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM relations", [], |row| row.get(0))?;
+        let embeddings: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+
+        let entity_count = (decisions + tasks + notes + prompts + components + links) as usize;
+
+        Ok(CacheStats {
+            entity_count,
+            embedding_count: embeddings as usize,
+            decisions: decisions as usize,
+            tasks: tasks as usize,
+            notes: notes as usize,
+            prompts: prompts as usize,
+            components: components as usize,
+            links: links as usize,
+            relations: relations as usize,
+        })
+    }
+
+    /// Compute and store an embedding for an entity if the content has changed.
+    /// Returns true if a new embedding was computed, false if skipped (unchanged).
+    ///
+    /// Uses the Embedder to compute embeddings for the entity's embeddable text
+    /// (title + content + tags). Skips computation if the text hash matches
+    /// the previously stored hash.
+    pub fn compute_and_store_embedding_if_changed(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+        title: &str,
+        content: Option<&str>,
+        tags: &[String],
+        embedder: &crate::embeddings::Embedder,
+    ) -> Result<bool> {
+        let text = embeddable_text(title, content, tags);
+        let text_hash = compute_text_hash(&text);
+
+        // Check if we already have an embedding with this hash
+        if let Some(stored_hash) = self.get_embedding_text_hash(entity_id)? {
+            if stored_hash == text_hash {
+                // Content hasn't changed, skip embedding computation
+                return Ok(false);
+            }
+        }
+
+        // Compute new embedding
+        let embedding = embedder.embed(&text)?;
+
+        // Store it
+        self.store_embedding(entity_id, entity_type, &embedding, &text_hash)?;
+
+        Ok(true)
     }
 
     /// Full-text search for decisions
@@ -877,6 +1103,184 @@ impl SqliteCache {
         all_results.truncate(limit as usize);
 
         Ok(all_results)
+    }
+
+    /// Search a specific entity type with full-text search.
+    pub fn search_by_type(&self, entity_type: &str, query: &str, limit: i64) -> Result<Vec<SearchResult>> {
+        match entity_type {
+            "decision" => {
+                let results = self.search_decisions(query, limit)?;
+                Ok(results.into_iter().map(SearchResult::Decision).collect())
+            }
+            "task" => {
+                let results = self.search_tasks(query, limit)?;
+                Ok(results.into_iter().map(SearchResult::Task).collect())
+            }
+            "note" => {
+                let results = self.search_notes(query, limit)?;
+                Ok(results.into_iter().map(SearchResult::Note).collect())
+            }
+            "prompt" => {
+                let results = self.search_prompts(query, limit)?;
+                Ok(results.into_iter().map(SearchResult::Prompt).collect())
+            }
+            "component" => {
+                let results = self.search_components(query, limit)?;
+                Ok(results.into_iter().map(SearchResult::Component).collect())
+            }
+            "link" => {
+                let results = self.search_links(query, limit)?;
+                Ok(results.into_iter().map(SearchResult::Link).collect())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    // =========================================================================
+    // Semantic Search
+    // =========================================================================
+
+    /// Search entities by semantic similarity using vector embeddings.
+    ///
+    /// Computes cosine similarity between the query embedding and all stored
+    /// embeddings, returning the top results above the threshold.
+    ///
+    /// # Arguments
+    /// * `query_embedding` - The embedding vector for the query text
+    /// * `entity_type` - Optional filter to only search specific entity types
+    /// * `limit` - Maximum number of results to return
+    /// * `threshold` - Minimum similarity score (0.0 to 1.0) for results
+    pub fn search_semantic(
+        &self,
+        query_embedding: &[f32],
+        entity_type: Option<&str>,
+        limit: usize,
+        threshold: f32,
+    ) -> Result<Vec<SemanticSearchResult>> {
+        // Load all embeddings (optionally filtered by type)
+        let embeddings = self.list_all_embeddings(entity_type)?;
+
+        // Compute similarity and collect results
+        let mut results: Vec<SemanticSearchResult> = embeddings
+            .into_iter()
+            .map(|(entity_id, entity_type, embedding)| {
+                let score = cosine_similarity(query_embedding, &embedding);
+                (entity_id, entity_type, score)
+            })
+            .filter(|(_, _, score)| *score >= threshold)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|(entity_id, entity_type, score)| {
+                // Look up metadata for this entity
+                let metadata = self.get_entity_metadata(&entity_id, &entity_type).ok()?;
+                metadata.map(|(seq, title)| SemanticSearchResult {
+                    entity_id,
+                    entity_type,
+                    sequence_number: seq,
+                    title,
+                    score,
+                })
+            })
+            .collect();
+
+        // Sort by score descending
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Limit results
+        results.truncate(limit);
+
+        Ok(results)
+    }
+
+    /// Get basic metadata (sequence_number, title) for an entity.
+    fn get_entity_metadata(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+    ) -> Result<Option<(u32, String)>> {
+        let table = match entity_type {
+            "decision" => "decisions",
+            "task" => "tasks",
+            "note" => "notes",
+            "prompt" => "prompts",
+            "component" => "components",
+            "link" => "links",
+            _ => return Ok(None),
+        };
+
+        let query = format!(
+            "SELECT sequence_number, title FROM {} WHERE id = ?1",
+            table
+        );
+
+        let result: Option<(u32, String)> = self
+            .conn
+            .query_row(&query, [entity_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?;
+
+        Ok(result)
+    }
+
+    /// Get filter-relevant metadata for an entity.
+    /// Returns status (if applicable), tags, and created_at for filter matching.
+    pub fn get_filter_metadata(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+    ) -> Result<Option<FilterMetadata>> {
+        // Build query based on entity type (different tables have different columns)
+        let (query, has_status) = match entity_type {
+            "decision" => (
+                "SELECT status, tags, created_at FROM decisions WHERE id = ?1",
+                true,
+            ),
+            "task" => (
+                "SELECT status, tags, created_at FROM tasks WHERE id = ?1",
+                true,
+            ),
+            "component" => (
+                "SELECT status, tags, created_at FROM components WHERE id = ?1",
+                true,
+            ),
+            "note" => (
+                "SELECT NULL as status, tags, created_at FROM notes WHERE id = ?1",
+                false,
+            ),
+            "prompt" => (
+                "SELECT NULL as status, tags, created_at FROM prompts WHERE id = ?1",
+                false,
+            ),
+            "link" => (
+                "SELECT NULL as status, tags, created_at FROM links WHERE id = ?1",
+                false,
+            ),
+            _ => return Ok(None),
+        };
+
+        let result: Option<(Option<String>, Option<String>, String)> = self
+            .conn
+            .query_row(query, [entity_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .optional()?;
+
+        Ok(result.map(|(status_opt, tags_str, created_at_str)| {
+            // Parse tags from comma-separated string
+            let tags = tags_str
+                .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+                .unwrap_or_default();
+
+            // Parse created_at
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc));
+
+            FilterMetadata {
+                status: if has_status { status_opt } else { None },
+                tags,
+                created_at,
+            }
+        }))
     }
 
     /// Get relations from a source entity
@@ -1295,6 +1699,24 @@ pub enum SearchResult {
     Link(LinkSearchResult),
 }
 
+/// Result from semantic similarity search
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SemanticSearchResult {
+    pub entity_id: String,
+    pub entity_type: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub score: f32,
+}
+
+/// Metadata for filter matching
+#[derive(Debug, Clone)]
+pub struct FilterMetadata {
+    pub status: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 /// Cached relation for fast queries
 #[derive(Debug, Clone)]
 pub struct CachedRelation {
@@ -1340,6 +1762,101 @@ pub struct TaskBlocker {
     pub sequence_number: u32,
     pub title: String,
     pub status: String,
+}
+
+// =========================================================================
+// Cache Statistics
+// =========================================================================
+
+/// Warning threshold for entity count.
+pub const ENTITY_WARNING_THRESHOLD: usize = 1000;
+
+/// Warning threshold for loro.db size in bytes (10MB).
+pub const LORO_SIZE_WARNING_THRESHOLD: u64 = 10 * 1024 * 1024;
+
+/// Cache statistics for monitoring and warnings.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CacheStats {
+    /// Total count of all entities
+    pub entity_count: usize,
+    /// Total count of embeddings
+    pub embedding_count: usize,
+    /// Count of decisions
+    pub decisions: usize,
+    /// Count of tasks
+    pub tasks: usize,
+    /// Count of notes
+    pub notes: usize,
+    /// Count of prompts
+    pub prompts: usize,
+    /// Count of components
+    pub components: usize,
+    /// Count of links
+    pub links: usize,
+    /// Count of relations
+    pub relations: usize,
+}
+
+// =========================================================================
+// Embedding Helper Functions
+// =========================================================================
+
+/// Compute cosine similarity between two vectors.
+/// Returns a value between -1 and 1, where 1 means identical direction.
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
+    }
+}
+
+/// Extract embeddable text from an entity's fields.
+/// Combines title, content, and tags into a single string for embedding.
+pub fn embeddable_text(title: &str, content: Option<&str>, tags: &[String]) -> String {
+    let mut text = title.to_string();
+    if let Some(c) = content {
+        text.push_str("\n\n");
+        text.push_str(c);
+    }
+    if !tags.is_empty() {
+        text.push_str("\n\n");
+        text.push_str(&tags.join(" "));
+    }
+    text
+}
+
+/// Convert an f32 embedding vector to bytes for storage.
+fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(embedding.len() * 4);
+    for &value in embedding {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+/// Convert bytes back to an f32 embedding vector.
+fn bytes_to_embedding(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
+/// Compute a simple hash of text for change detection.
+/// Uses a fast non-cryptographic hash.
+pub fn compute_text_hash(text: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 // Implement From for rusqlite::Error
@@ -1736,5 +2253,399 @@ mod tests {
         // Get with limit
         let ready = cache.get_ready_tasks(Some(3)).unwrap();
         assert_eq!(ready.len(), 3);
+    }
+
+    // =========================================================================
+    // Embedding Tests
+    // =========================================================================
+
+    #[test]
+    fn test_embedding_to_bytes_roundtrip() {
+        let original = vec![1.0f32, 2.5, -3.7, 0.0, 4.2];
+        let bytes = embedding_to_bytes(&original);
+        let recovered = bytes_to_embedding(&bytes);
+        assert_eq!(original.len(), recovered.len());
+        for (a, b) in original.iter().zip(recovered.iter()) {
+            assert!((a - b).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_store_and_get_embedding() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        let embedding = vec![0.1f32, 0.2, 0.3, 0.4, 0.5];
+        let entity_id = "test-entity-123";
+        let entity_type = "decision";
+        let text_hash = "abc123";
+
+        // Store embedding
+        cache
+            .store_embedding(entity_id, entity_type, &embedding, text_hash)
+            .unwrap();
+
+        // Retrieve embedding
+        let retrieved = cache.get_embedding(entity_id).unwrap();
+        assert!(retrieved.is_some());
+
+        let retrieved = retrieved.unwrap();
+        assert_eq!(embedding.len(), retrieved.len());
+        for (a, b) in embedding.iter().zip(retrieved.iter()) {
+            assert!((a - b).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_get_embedding_nonexistent() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        let retrieved = cache.get_embedding("nonexistent").unwrap();
+        assert!(retrieved.is_none());
+    }
+
+    #[test]
+    fn test_delete_embedding() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        let embedding = vec![0.1f32, 0.2, 0.3];
+        cache
+            .store_embedding("test-id", "decision", &embedding, "hash")
+            .unwrap();
+
+        // Verify it exists
+        assert!(cache.get_embedding("test-id").unwrap().is_some());
+
+        // Delete it
+        cache.delete_embedding("test-id").unwrap();
+
+        // Verify it's gone
+        assert!(cache.get_embedding("test-id").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_list_embeddings_by_type() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Store embeddings for different types
+        cache
+            .store_embedding("d1", "decision", &[1.0, 2.0], "h1")
+            .unwrap();
+        cache
+            .store_embedding("d2", "decision", &[3.0, 4.0], "h2")
+            .unwrap();
+        cache
+            .store_embedding("t1", "task", &[5.0, 6.0], "h3")
+            .unwrap();
+
+        // List only decisions
+        let decisions = cache.list_embeddings_by_type("decision").unwrap();
+        assert_eq!(decisions.len(), 2);
+
+        // List only tasks
+        let tasks = cache.list_embeddings_by_type("task").unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].0, "t1");
+    }
+
+    #[test]
+    fn test_list_all_embeddings() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        cache
+            .store_embedding("d1", "decision", &[1.0], "h1")
+            .unwrap();
+        cache
+            .store_embedding("t1", "task", &[2.0], "h2")
+            .unwrap();
+
+        // List all
+        let all = cache.list_all_embeddings(None).unwrap();
+        assert_eq!(all.len(), 2);
+
+        // List filtered
+        let decisions = cache.list_all_embeddings(Some("decision")).unwrap();
+        assert_eq!(decisions.len(), 1);
+    }
+
+    #[test]
+    fn test_count_embeddings() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        assert_eq!(cache.count_embeddings().unwrap(), 0);
+
+        cache
+            .store_embedding("e1", "decision", &[1.0], "h1")
+            .unwrap();
+        cache
+            .store_embedding("e2", "task", &[2.0], "h2")
+            .unwrap();
+
+        assert_eq!(cache.count_embeddings().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_embedding_text_hash() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        cache
+            .store_embedding("e1", "decision", &[1.0], "original_hash")
+            .unwrap();
+
+        let hash = cache.get_embedding_text_hash("e1").unwrap();
+        assert_eq!(hash, Some("original_hash".to_string()));
+
+        // Update with different hash
+        cache
+            .store_embedding("e1", "decision", &[2.0], "new_hash")
+            .unwrap();
+
+        let hash = cache.get_embedding_text_hash("e1").unwrap();
+        assert_eq!(hash, Some("new_hash".to_string()));
+    }
+
+    #[test]
+    fn test_compute_text_hash_deterministic() {
+        let text = "Hello, world!";
+        let hash1 = compute_text_hash(text);
+        let hash2 = compute_text_hash(text);
+        assert_eq!(hash1, hash2);
+
+        let different_text = "Different text";
+        let hash3 = compute_text_hash(different_text);
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_clear_also_clears_embeddings() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        cache
+            .store_embedding("e1", "decision", &[1.0], "h1")
+            .unwrap();
+        assert_eq!(cache.count_embeddings().unwrap(), 1);
+
+        cache.clear().unwrap();
+        assert_eq!(cache.count_embeddings().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_embeddable_text_title_only() {
+        let text = embeddable_text("My Title", None, &[]);
+        assert_eq!(text, "My Title");
+    }
+
+    #[test]
+    fn test_embeddable_text_with_content() {
+        let text = embeddable_text("Title", Some("Content here"), &[]);
+        assert_eq!(text, "Title\n\nContent here");
+    }
+
+    #[test]
+    fn test_embeddable_text_with_tags() {
+        let text = embeddable_text("Title", None, &["tag1".to_string(), "tag2".to_string()]);
+        assert_eq!(text, "Title\n\ntag1 tag2");
+    }
+
+    #[test]
+    fn test_embeddable_text_full() {
+        let text = embeddable_text(
+            "Title",
+            Some("Content"),
+            &["rust".to_string(), "database".to_string()],
+        );
+        assert_eq!(text, "Title\n\nContent\n\nrust database");
+    }
+
+    // =========================================================================
+    // Semantic Search Tests
+    // =========================================================================
+
+    #[test]
+    fn test_cosine_similarity_identical() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!((sim - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!(sim.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_cosine_similarity_opposite() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![-1.0, 0.0, 0.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!((sim - (-1.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_cosine_similarity_empty() {
+        let a: Vec<f32> = vec![];
+        let b: Vec<f32> = vec![];
+        let sim = cosine_similarity(&a, &b);
+        assert_eq!(sim, 0.0);
+    }
+
+    #[test]
+    fn test_search_semantic_basic() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create a decision for metadata lookup
+        let decision = Decision::new("Test Decision".to_string(), 1);
+        cache.index_decision(&decision).unwrap();
+
+        // Store embedding with known vector
+        let entity_id = decision.base.id.to_string();
+        let embedding = vec![1.0, 0.0, 0.0]; // 3-dimensional for simplicity
+        cache
+            .store_embedding(&entity_id, "decision", &embedding, "hash1")
+            .unwrap();
+
+        // Search with identical vector
+        let query_embedding = vec![1.0, 0.0, 0.0];
+        let results = cache
+            .search_semantic(&query_embedding, None, 10, 0.0)
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entity_id, entity_id);
+        assert!((results[0].score - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_search_semantic_threshold() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create decisions
+        let d1 = Decision::new("Decision One".to_string(), 1);
+        let d2 = Decision::new("Decision Two".to_string(), 2);
+        cache.index_decision(&d1).unwrap();
+        cache.index_decision(&d2).unwrap();
+
+        // Store embeddings
+        cache
+            .store_embedding(&d1.base.id.to_string(), "decision", &[1.0, 0.0, 0.0], "h1")
+            .unwrap();
+        cache
+            .store_embedding(&d2.base.id.to_string(), "decision", &[0.0, 1.0, 0.0], "h2")
+            .unwrap();
+
+        // Search with vector similar to d1
+        let query = vec![0.9, 0.1, 0.0];
+        let results = cache.search_semantic(&query, None, 10, 0.8).unwrap();
+
+        // Only d1 should be above 0.8 threshold
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entity_id, d1.base.id.to_string());
+    }
+
+    #[test]
+    fn test_search_semantic_type_filter() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create a decision and a task
+        let decision = Decision::new("Test Decision".to_string(), 1);
+        let task = Task::new("Test Task".to_string(), 2);
+        cache.index_decision(&decision).unwrap();
+        cache.index_task(&task).unwrap();
+
+        // Store similar embeddings for both
+        let embedding = vec![1.0, 0.0, 0.0];
+        cache
+            .store_embedding(
+                &decision.base.id.to_string(),
+                "decision",
+                &embedding,
+                "h1",
+            )
+            .unwrap();
+        cache
+            .store_embedding(&task.base.id.to_string(), "task", &embedding, "h2")
+            .unwrap();
+
+        // Search only decisions
+        let results = cache
+            .search_semantic(&embedding, Some("decision"), 10, 0.0)
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entity_type, "decision");
+    }
+
+    #[test]
+    fn test_search_semantic_ordering() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create multiple decisions
+        let d1 = Decision::new("Decision One".to_string(), 1);
+        let d2 = Decision::new("Decision Two".to_string(), 2);
+        let d3 = Decision::new("Decision Three".to_string(), 3);
+        cache.index_decision(&d1).unwrap();
+        cache.index_decision(&d2).unwrap();
+        cache.index_decision(&d3).unwrap();
+
+        // Store embeddings with decreasing similarity to query
+        cache
+            .store_embedding(&d1.base.id.to_string(), "decision", &[0.9, 0.1, 0.0], "h1")
+            .unwrap();
+        cache
+            .store_embedding(&d2.base.id.to_string(), "decision", &[0.7, 0.3, 0.0], "h2")
+            .unwrap();
+        cache
+            .store_embedding(&d3.base.id.to_string(), "decision", &[0.5, 0.5, 0.0], "h3")
+            .unwrap();
+
+        // Search
+        let query = vec![1.0, 0.0, 0.0];
+        let results = cache.search_semantic(&query, None, 10, 0.0).unwrap();
+
+        // Should be ordered by score descending
+        assert_eq!(results.len(), 3);
+        assert!(results[0].score >= results[1].score);
+        assert!(results[1].score >= results[2].score);
+    }
+
+    #[test]
+    fn test_search_semantic_limit() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create many decisions
+        for i in 1..=10 {
+            let d = Decision::new(format!("Decision {}", i), i);
+            cache.index_decision(&d).unwrap();
+            cache
+                .store_embedding(
+                    &d.base.id.to_string(),
+                    "decision",
+                    &[1.0, 0.0, 0.0],
+                    &format!("h{}", i),
+                )
+                .unwrap();
+        }
+
+        // Search with limit
+        let query = vec![1.0, 0.0, 0.0];
+        let results = cache.search_semantic(&query, None, 3, 0.0).unwrap();
+
+        assert_eq!(results.len(), 3);
     }
 }

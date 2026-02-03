@@ -1,10 +1,10 @@
 use clap::Parser;
 use medulla::cli::{
     handle_add_component, handle_add_decision, handle_add_link, handle_add_note, handle_add_prompt,
-    handle_add_task, handle_delete, handle_get, handle_init, handle_list, handle_relation_add,
-    handle_relation_delete, handle_relation_list, handle_search, handle_serve, handle_tasks_blocked,
-    handle_tasks_next, handle_tasks_ready, handle_update, AddEntity, Cli, Commands, RelationAction,
-    TasksAction,
+    handle_add_task, handle_cache_rebuild, handle_cache_stats, handle_delete, handle_get, handle_init,
+    handle_list, handle_relation_add, handle_relation_delete, handle_relation_list, handle_search,
+    handle_serve, handle_tasks_blocked, handle_tasks_next, handle_tasks_ready, handle_update,
+    AddEntity, CacheAction, Cli, Commands, RelationAction, TasksAction,
 };
 
 fn main() {
@@ -83,7 +83,7 @@ fn main() {
             json,
         } => handle_update(id, title, status, tags, remove_tags, relations, stdin, edit, json),
         Commands::Delete { id, force } => handle_delete(id, force),
-        Commands::Search { query, json } => handle_search(query, json),
+        Commands::Search { query, semantic, json } => handle_search(query, semantic, json),
         Commands::Tasks(tasks_cmd) => match tasks_cmd.action {
             TasksAction::Ready { limit, json } => handle_tasks_ready(limit, json),
             TasksAction::Next { json } => handle_tasks_next(json),
@@ -104,6 +104,10 @@ fn main() {
                 json,
             } => handle_relation_delete(source_id, target_id, relation_type, json),
             RelationAction::List { entity_id, json } => handle_relation_list(entity_id, json),
+        },
+        Commands::Cache(cache_cmd) => match cache_cmd.action {
+            CacheAction::Stats { json } => handle_cache_stats(json),
+            CacheAction::Rebuild { json } => handle_cache_rebuild(json),
         },
     };
 

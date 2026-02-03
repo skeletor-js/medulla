@@ -139,6 +139,42 @@ pub struct SearchFulltextParams {
     pub limit: Option<u32>,
 }
 
+/// Parameters for search_semantic tool
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SearchSemanticParams {
+    /// Natural language query to find semantically similar entities
+    pub query: String,
+    /// Optional entity type filter (decision, task, note, etc.)
+    #[serde(rename = "type")]
+    pub entity_type: Option<String>,
+    /// Maximum results (default 10)
+    pub limit: Option<u32>,
+    /// Minimum similarity threshold (0.0-1.0, default 0.3)
+    pub threshold: Option<f32>,
+}
+
+/// Parameters for search_query tool (combines fulltext, semantic, and filters)
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SearchQueryParams {
+    /// Fulltext search query (optional if using semantic_query)
+    pub query: Option<String>,
+    /// Semantic search query (optional if using fulltext query)
+    pub semantic_query: Option<String>,
+    /// Filter by entity type (decision, task, note, etc.)
+    #[serde(rename = "type")]
+    pub entity_type: Option<String>,
+    /// Filter by status (for entities that have status)
+    pub status: Option<String>,
+    /// Filter by tags (entity must have all specified tags)
+    pub tags: Option<Vec<String>>,
+    /// Filter: created after this date (ISO 8601 format)
+    pub created_after: Option<String>,
+    /// Filter: created before this date (ISO 8601 format)
+    pub created_before: Option<String>,
+    /// Maximum results (default 20)
+    pub limit: Option<u32>,
+}
+
 /// Parameters for graph_relations tool
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GraphRelationsParams {

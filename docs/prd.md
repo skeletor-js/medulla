@@ -2,9 +2,9 @@
 
 > A git-native, AI-accessible knowledge engine for software projects.
 
-**Status**: Phase 2 Complete — MCP Server Implemented
+**Status**: Phase 3 Complete — Semantic Search & Filters Implemented
 **Date**: 2025-01-30
-**Updated**: 2026-02-03
+**Updated**: 2026-02-02
 **Authors**: Jordan Stella, Claude
 **Website**: [medulla.cc](https://medulla.cc)
 
@@ -943,14 +943,18 @@ medulla add decision "Use Postgres" --edit  # Opens $EDITOR with template
 
 **Phase 2 Complete:** Full MCP server implementation. Manual validation with Claude Desktop/MCP Inspector complete.
 
-### Phase 3: Search & Graph
+### Phase 3: Search & Graph ✓ COMPLETE
 
 - [x] Full-text search via SQLite FTS5 (`medulla search` command)
-- [ ] Semantic search via fastembed (`search_semantic`)
-- [ ] Immediate embedding computation on add/update (~50-200ms)
-- [ ] Search filters (`type:`, `status:`, `tag:`, `created:`)
-- [ ] Structured queries (`search_query`)
-- [ ] Soft warnings at performance thresholds (~1,000 entities, ~10MB loro.db)
+- [x] Semantic search via fastembed (`search_semantic` MCP tool + `--semantic` CLI flag)
+- [x] Immediate embedding computation on add/update (~50-200ms)
+- [x] Search filters (`type:`, `status:`, `tag:`, `created:`)
+- [x] Structured queries (`search_query` MCP tool)
+- [x] Soft warnings at performance thresholds (~1,000 entities, ~10MB loro.db)
+- [x] Cache management commands (`medulla cache stats`, `medulla cache rebuild`)
+- [x] 120 unit tests + 21 integration tests
+
+**Phase 3 Complete:** Full semantic search with fastembed embeddings, filter parsing, and performance warnings.
 
 ### Phase 4: Snapshot & Git Integration
 
@@ -966,7 +970,7 @@ medulla add decision "Use Postgres" --edit  # Opens $EDITOR with template
 
 - [ ] HTTP transport for web UIs (`medulla serve --http 3000`)
 - [ ] OpenAPI documentation for HTTP mode
-- [ ] `medulla cache rebuild` command
+- [x] `medulla cache rebuild` command (implemented in Phase 3)
 - [ ] Homebrew formula
 - [ ] Cargo install (`cargo install medulla`)
 - [ ] Documentation site (medulla.cc)
@@ -1017,8 +1021,9 @@ Before implementation begins, the following areas need design decisions or furth
 5. ~~**Complete Phase 1**: Add remaining entity types, relations, update/delete commands, SQLite cache.~~ ✓ Complete — All 6 entity types implemented with full CLI support.
 6. **Validation**: Test git merge behavior with decisions on different branches.
 7. ~~**Phase 2**: Implement MCP server — see [docs/plans/2025-01-31-phase2-mcp-server-design.md](plans/2025-01-31-phase2-mcp-server-design.md).~~ ✓ Complete
-8. **Phase 2 Manual Validation**:~~ Test MCP server with Claude Desktop and MCP Inspector — see [docs/testing/manual-mcp-testing.md](testing/manual-mcp-testing.md).~~  ✓ Complete
-9. **Phase 3**: Implement semantic search and search filters.
+8. **Phase 2 Manual Validation**: ~~Test MCP server with Claude Desktop and MCP Inspector — see [docs/testing/manual-mcp-testing.md](testing/manual-mcp-testing.md).~~ ✓ Complete
+9. ~~**Phase 3**: Implement semantic search and search filters.~~ ✓ Complete
+10. **Phase 4**: Implement snapshot generation and git hook integration.
 
 ### Open Design Questions ✓ All Resolved
 
@@ -1069,7 +1074,7 @@ These can be decided during implementation, not upfront:
 Before moving to each phase, validate:
 
 1. **After Phase 1**: Can two branches with different decisions merge cleanly via git? ✓ Yes
-2. **After Phase 2**: Can Claude Desktop query and create decisions via MCP? (Manual testing pending)
-3. **After Phase 3**: Does semantic search return relevant results? Are embeddings computed within ~200ms?
+2. **After Phase 2**: Can Claude Desktop query and create decisions via MCP? ✓ Yes (Manual validation complete)
+3. **After Phase 3**: Does semantic search return relevant results? Are embeddings computed within ~200ms? ✓ Yes
 4. **After Phase 4**: Is the snapshot readable on GitHub without any tooling?
 5. **After Phase 5**: Can users install via Homebrew and `cargo install`?

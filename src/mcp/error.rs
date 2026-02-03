@@ -186,6 +186,9 @@ impl From<MedullaError> for McpError {
             MedullaError::LoroEncode(e) => McpError::StorageError {
                 message: format!("Loro encode error: {}", e),
             },
+            MedullaError::Embedding(e) => McpError::InternalError {
+                message: format!("Embedding error: {}", e),
+            },
         }
     }
 }

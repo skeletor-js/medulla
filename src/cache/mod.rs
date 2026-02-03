@@ -1,7 +1,9 @@
 mod sqlite_cache;
 
 pub use sqlite_cache::{
-    BlockedTask, CachedRelation, ComponentSearchResult, DecisionSearchResult, LinkSearchResult,
-    NoteSearchResult, PromptSearchResult, ReadyTask, SearchResult, SqliteCache, TaskBlocker,
-    TaskSearchResult,
+    compute_text_hash, cosine_similarity, embeddable_text, BlockedTask, CachedRelation,
+    CacheStats, ComponentSearchResult, DecisionSearchResult, FilterMetadata, LinkSearchResult,
+    NoteSearchResult, PromptSearchResult, ReadyTask, SearchResult, SemanticSearchResult,
+    SqliteCache, TaskBlocker, TaskSearchResult, ENTITY_WARNING_THRESHOLD,
+    LORO_SIZE_WARNING_THRESHOLD,
 };

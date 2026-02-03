@@ -99,6 +99,10 @@ pub enum Commands {
         /// Search query
         query: String,
 
+        /// Use semantic search (requires embeddings)
+        #[arg(long)]
+        semantic: bool,
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -112,6 +116,9 @@ pub enum Commands {
 
     /// Manage relations between entities
     Relation(RelationCommand),
+
+    /// Cache management commands
+    Cache(CacheCommand),
 }
 
 #[derive(Args, Debug)]
@@ -392,6 +399,29 @@ pub enum AddEntity {
         #[arg(long = "relation", short = 'r')]
         relations: Vec<String>,
 
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct CacheCommand {
+    #[command(subcommand)]
+    pub action: CacheAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CacheAction {
+    /// Show cache statistics
+    Stats {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Rebuild cache and recompute all embeddings
+    Rebuild {
         /// Output as JSON
         #[arg(long)]
         json: bool,

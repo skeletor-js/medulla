@@ -8,6 +8,7 @@ pub mod resources;
 pub mod tools;
 
 use crate::cache::SqliteCache;
+use crate::embeddings::Embedder;
 use crate::entity::{
     Component, Decision, EntityBase, Link, Note, Prompt, Task,
 };
@@ -22,9 +23,12 @@ use rmcp::{
     tool, tool_handler, tool_router, ErrorData as McpErrorData, ServerHandler,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 use tools::*;
+
+/// Lazy-initialized embedding model.
+static EMBEDDER: OnceLock<std::result::Result<Embedder, String>> = OnceLock::new();
 
 /// Subscription identifier type.
 pub type SubscriptionId = String;
@@ -99,6 +103,25 @@ const SERVER_NAME: &str = "medulla";
 #[allow(dead_code)]
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Parse a datetime string into DateTime<Utc>.
+/// Supports ISO 8601 datetime (RFC 3339) or date-only (YYYY-MM-DD).
+fn parse_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::{DateTime, Utc};
+
+    // Try full datetime first (RFC 3339)
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Utc));
+    }
+
+    // Try date only (YYYY-MM-DD) - set to midnight UTC
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let datetime = date.and_hms_opt(0, 0, 0)?;
+        return Some(DateTime::from_naive_utc_and_offset(datetime, Utc));
+    }
+
+    None
+}
+
 // All tool implementations in the tool_router impl block
 #[tool_router]
 impl MedullaServer {
@@ -109,6 +132,33 @@ impl MedullaServer {
             cache: Arc::new(Mutex::new(cache)),
             subscriptions: Arc::new(Mutex::new(SubscriptionState::new())),
             tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Get the embedder for computing text embeddings.
+    /// Lazily initializes the embedding model on first use.
+    /// Returns None if the embedder failed to initialize.
+    fn get_embedder() -> Option<&'static Embedder> {
+        let result = EMBEDDER.get_or_init(|| Embedder::new().map_err(|e| e.to_string()));
+        result.as_ref().ok()
+    }
+
+    /// Compute and store embedding for an entity (non-blocking on failure).
+    /// Logs a warning if embedding computation fails but doesn't propagate the error.
+    fn try_compute_embedding(
+        cache: &SqliteCache,
+        entity_id: &str,
+        entity_type: &str,
+        title: &str,
+        content: Option<&str>,
+        tags: &[String],
+    ) {
+        if let Some(embedder) = Self::get_embedder() {
+            if let Err(e) = cache.compute_and_store_embedding_if_changed(
+                entity_id, entity_type, title, content, tags, embedder,
+            ) {
+                tracing::warn!("Failed to compute embedding for {} {}: {}", entity_type, entity_id, e);
+            }
         }
     }
 
@@ -198,6 +248,16 @@ impl MedullaServer {
                     .index_decision(&decision)
                     .map_err(|e| McpError::from(e))?;
 
+                // Compute embedding
+                Self::try_compute_embedding(
+                    &cache,
+                    &decision.base.id.to_string(),
+                    "decision",
+                    &decision.base.title,
+                    decision.base.content.as_deref(),
+                    &decision.base.tags,
+                );
+
                 decision_to_response(&decision)
             }
             "task" => {
@@ -225,6 +285,16 @@ impl MedullaServer {
                 store.save().map_err(|e| McpError::from(e))?;
                 cache.index_task(&task).map_err(|e| McpError::from(e))?;
 
+                // Compute embedding
+                Self::try_compute_embedding(
+                    &cache,
+                    &task.base.id.to_string(),
+                    "task",
+                    &task.base.title,
+                    task.base.content.as_deref(),
+                    &task.base.tags,
+                );
+
                 task_to_response(&task)
             }
             "note" => {
@@ -242,6 +312,16 @@ impl MedullaServer {
                 store.add_note(&note).map_err(|e| McpError::from(e))?;
                 store.save().map_err(|e| McpError::from(e))?;
                 cache.index_note(&note).map_err(|e| McpError::from(e))?;
+
+                // Compute embedding
+                Self::try_compute_embedding(
+                    &cache,
+                    &note.base.id.to_string(),
+                    "note",
+                    &note.base.title,
+                    note.base.content.as_deref(),
+                    &note.base.tags,
+                );
 
                 note_to_response(&note)
             }
@@ -292,6 +372,16 @@ impl MedullaServer {
                 store.save().map_err(|e| McpError::from(e))?;
                 cache.index_prompt(&prompt).map_err(|e| McpError::from(e))?;
 
+                // Compute embedding
+                Self::try_compute_embedding(
+                    &cache,
+                    &prompt.base.id.to_string(),
+                    "prompt",
+                    &prompt.base.title,
+                    prompt.base.content.as_deref(),
+                    &prompt.base.tags,
+                );
+
                 prompt_to_response(&prompt)
             }
             "component" => {
@@ -321,6 +411,16 @@ impl MedullaServer {
                 cache
                     .index_component(&component)
                     .map_err(|e| McpError::from(e))?;
+
+                // Compute embedding
+                Self::try_compute_embedding(
+                    &cache,
+                    &component.base.id.to_string(),
+                    "component",
+                    &component.base.title,
+                    component.base.content.as_deref(),
+                    &component.base.tags,
+                );
 
                 component_to_response(&component)
             }
@@ -352,6 +452,16 @@ impl MedullaServer {
                 store.add_link(&link).map_err(|e| McpError::from(e))?;
                 store.save().map_err(|e| McpError::from(e))?;
                 cache.index_link(&link).map_err(|e| McpError::from(e))?;
+
+                // Compute embedding
+                Self::try_compute_embedding(
+                    &cache,
+                    &link.base.id.to_string(),
+                    "link",
+                    &link.base.title,
+                    link.base.content.as_deref(),
+                    &link.base.tags,
+                );
 
                 link_to_response(&link)
             }
@@ -889,6 +999,353 @@ impl MedullaServer {
             })?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ========================================================================
+    // search_semantic
+    // ========================================================================
+
+    /// Semantic similarity search across entities using vector embeddings.
+    #[tool(description = "Search entities by semantic similarity to a natural language query")]
+    pub async fn search_semantic(
+        &self,
+        Parameters(params): Parameters<SearchSemanticParams>,
+    ) -> Result<CallToolResult, McpErrorData> {
+        if params.query.trim().is_empty() {
+            return Err(McpError::ValidationFailed {
+                field: "query".to_string(),
+                message: "Search query cannot be empty".to_string(),
+            }
+            .into());
+        }
+
+        if let Some(ref entity_type) = params.entity_type {
+            validate_entity_type(entity_type)?;
+        }
+
+        // Get the embedder
+        let embedder = Self::get_embedder().ok_or_else(|| McpError::InternalError {
+            message: "Embedding model not available".to_string(),
+        })?;
+
+        // Compute query embedding
+        let query_embedding = embedder.embed(&params.query).map_err(|e| {
+            McpError::InternalError {
+                message: format!("Failed to compute query embedding: {}", e),
+            }
+        })?;
+
+        let cache = self.cache.lock().await;
+        let limit = params.limit.unwrap_or(10).min(100) as usize;
+        let threshold = params.threshold.unwrap_or(0.3);
+
+        // Perform semantic search
+        let results = cache
+            .search_semantic(
+                &query_embedding,
+                params.entity_type.as_deref(),
+                limit,
+                threshold,
+            )
+            .map_err(|e| McpError::InternalError {
+                message: format!("Semantic search failed: {}", e),
+            })?;
+
+        let response = serde_json::json!({
+            "results": results,
+            "total": results.len(),
+            "query": params.query,
+            "threshold": threshold,
+        });
+
+        let json =
+            serde_json::to_string_pretty(&response).map_err(|e| McpError::InternalError {
+                message: format!("Failed to serialize search results: {}", e),
+            })?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ========================================================================
+    // search_query
+    // ========================================================================
+
+    /// Combined search with filters, supporting both fulltext and semantic search.
+    #[tool(description = "Advanced search combining fulltext, semantic, and structured filters")]
+    pub async fn search_query(
+        &self,
+        Parameters(params): Parameters<SearchQueryParams>,
+    ) -> Result<CallToolResult, McpErrorData> {
+        // At least one search method should be provided
+        if params.query.is_none() && params.semantic_query.is_none() {
+            return Err(McpError::ValidationFailed {
+                field: "query".to_string(),
+                message: "Either 'query' (fulltext) or 'semantic_query' must be provided".to_string(),
+            }
+            .into());
+        }
+
+        if let Some(ref entity_type) = params.entity_type {
+            validate_entity_type(entity_type)?;
+        }
+
+        let cache = self.cache.lock().await;
+        let limit = params.limit.unwrap_or(20).min(100) as usize;
+
+        // Build filter from params
+        let filter = crate::search::SearchFilter {
+            entity_type: params.entity_type.clone(),
+            status: params.status.clone(),
+            tags: params.tags.clone().unwrap_or_default(),
+            created_after: params.created_after.as_ref().and_then(|s| parse_datetime(s)),
+            created_before: params.created_before.as_ref().and_then(|s| parse_datetime(s)),
+        };
+
+        let mut results: Vec<serde_json::Value> = Vec::new();
+
+        // Perform semantic search if semantic_query provided
+        if let Some(ref semantic_query) = params.semantic_query {
+            let embedder = Self::get_embedder().ok_or_else(|| McpError::InternalError {
+                message: "Embedding model not available".to_string(),
+            })?;
+
+            let query_embedding = embedder.embed(semantic_query).map_err(|e| {
+                McpError::InternalError {
+                    message: format!("Failed to compute query embedding: {}", e),
+                }
+            })?;
+
+            let semantic_results = cache
+                .search_semantic(
+                    &query_embedding,
+                    filter.entity_type.as_deref(),
+                    limit,
+                    0.3,
+                )
+                .map_err(|e| McpError::InternalError {
+                    message: format!("Semantic search failed: {}", e),
+                })?;
+
+            // Apply additional filters to semantic results
+            for r in semantic_results {
+                if self.matches_search_filter(&cache, &r.entity_id, &r.entity_type, &filter) {
+                    results.push(serde_json::json!({
+                        "type": r.entity_type,
+                        "id": r.entity_id,
+                        "sequence_number": r.sequence_number,
+                        "title": r.title,
+                        "score": r.score,
+                        "match_type": "semantic",
+                    }));
+                }
+            }
+        }
+
+        // Perform fulltext search if query provided
+        if let Some(ref query) = params.query {
+            // Determine which types to search
+            let types_to_search: Vec<&str> = if let Some(ref t) = filter.entity_type {
+                vec![t.as_str()]
+            } else {
+                VALID_ENTITY_TYPES.to_vec()
+            };
+
+            for entity_type in types_to_search {
+                let fulltext_results = self.search_type_fulltext(
+                    &cache,
+                    entity_type,
+                    query,
+                    &filter,
+                    limit as i64,
+                )?;
+                results.extend(fulltext_results);
+            }
+        }
+
+        // Truncate to limit
+        results.truncate(limit);
+
+        let response = serde_json::json!({
+            "results": results,
+            "total": results.len(),
+            "filters": {
+                "entity_type": params.entity_type,
+                "status": params.status,
+                "tags": params.tags,
+            },
+        });
+
+        let json =
+            serde_json::to_string_pretty(&response).map_err(|e| McpError::InternalError {
+                message: format!("Failed to serialize search results: {}", e),
+            })?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    /// Helper: Check if an entity matches the search filter.
+    fn matches_search_filter(
+        &self,
+        cache: &SqliteCache,
+        entity_id: &str,
+        entity_type: &str,
+        filter: &crate::search::SearchFilter,
+    ) -> bool {
+        // If no advanced filters are set, always match
+        if filter.status.is_none()
+            && filter.tags.is_empty()
+            && filter.created_after.is_none()
+            && filter.created_before.is_none()
+        {
+            return true;
+        }
+
+        // Load filter metadata for the entity
+        let metadata = match cache.get_filter_metadata(entity_id, entity_type) {
+            Ok(Some(m)) => m,
+            _ => return false, // Can't verify filters without metadata
+        };
+
+        // Check status filter
+        if let Some(ref required_status) = filter.status {
+            match &metadata.status {
+                Some(actual_status) if actual_status == required_status => {}
+                _ => return false,
+            }
+        }
+
+        // Check tag filters (entity must have ALL specified tags)
+        for required_tag in &filter.tags {
+            if !metadata.tags.iter().any(|t| t.eq_ignore_ascii_case(required_tag)) {
+                return false;
+            }
+        }
+
+        // Check created_after filter
+        if let Some(ref after) = filter.created_after {
+            match &metadata.created_at {
+                Some(created) if created >= after => {}
+                _ => return false,
+            }
+        }
+
+        // Check created_before filter
+        if let Some(ref before) = filter.created_before {
+            match &metadata.created_at {
+                Some(created) if created <= before => {}
+                _ => return false,
+            }
+        }
+
+        true
+    }
+
+    /// Helper: Search a specific entity type with fulltext and apply filters.
+    fn search_type_fulltext(
+        &self,
+        cache: &SqliteCache,
+        entity_type: &str,
+        query: &str,
+        filter: &crate::search::SearchFilter,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, McpError> {
+        let mut results = Vec::new();
+
+        match entity_type {
+            "decision" => {
+                if let Ok(search_results) = cache.search_decisions(query, limit) {
+                    for r in search_results {
+                        if filter.status.is_none() || filter.status.as_deref() == Some(&r.status) {
+                            results.push(serde_json::json!({
+                                "type": "decision",
+                                "id": r.id,
+                                "sequence_number": r.sequence_number,
+                                "title": r.title,
+                                "status": r.status,
+                                "match_type": "fulltext",
+                            }));
+                        }
+                    }
+                }
+            }
+            "task" => {
+                if let Ok(search_results) = cache.search_tasks(query, limit) {
+                    for r in search_results {
+                        if filter.status.is_none() || filter.status.as_deref() == Some(&r.status) {
+                            results.push(serde_json::json!({
+                                "type": "task",
+                                "id": r.id,
+                                "sequence_number": r.sequence_number,
+                                "title": r.title,
+                                "status": r.status,
+                                "priority": r.priority,
+                                "match_type": "fulltext",
+                            }));
+                        }
+                    }
+                }
+            }
+            "note" => {
+                if let Ok(search_results) = cache.search_notes(query, limit) {
+                    for r in search_results {
+                        results.push(serde_json::json!({
+                            "type": "note",
+                            "id": r.id,
+                            "sequence_number": r.sequence_number,
+                            "title": r.title,
+                            "note_type": r.note_type,
+                            "match_type": "fulltext",
+                        }));
+                    }
+                }
+            }
+            "prompt" => {
+                if let Ok(search_results) = cache.search_prompts(query, limit) {
+                    for r in search_results {
+                        results.push(serde_json::json!({
+                            "type": "prompt",
+                            "id": r.id,
+                            "sequence_number": r.sequence_number,
+                            "title": r.title,
+                            "match_type": "fulltext",
+                        }));
+                    }
+                }
+            }
+            "component" => {
+                if let Ok(search_results) = cache.search_components(query, limit) {
+                    for r in search_results {
+                        if filter.status.is_none() || filter.status.as_deref() == Some(&r.status) {
+                            results.push(serde_json::json!({
+                                "type": "component",
+                                "id": r.id,
+                                "sequence_number": r.sequence_number,
+                                "title": r.title,
+                                "status": r.status,
+                                "match_type": "fulltext",
+                            }));
+                        }
+                    }
+                }
+            }
+            "link" => {
+                if let Ok(search_results) = cache.search_links(query, limit) {
+                    for r in search_results {
+                        results.push(serde_json::json!({
+                            "type": "link",
+                            "id": r.id,
+                            "sequence_number": r.sequence_number,
+                            "title": r.title,
+                            "url": r.url,
+                            "match_type": "fulltext",
+                        }));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        Ok(results)
     }
 
     // ========================================================================
@@ -1826,6 +2283,22 @@ impl MedullaServer {
                             })?;
                         cache.index_decision(&updated).map_err(McpError::from)?;
 
+                        // Recompute embedding if embeddable content changed
+                        if params.title.is_some()
+                            || params.content.is_some()
+                            || params.add_tags.is_some()
+                            || params.remove_tags.is_some()
+                        {
+                            Self::try_compute_embedding(
+                                cache,
+                                &updated.base.id.to_string(),
+                                "decision",
+                                &updated.base.title,
+                                updated.base.content.as_deref(),
+                                &updated.base.tags,
+                            );
+                        }
+
                         return Ok(Some(decision_to_response(&updated)));
                     }
                 }
@@ -1868,6 +2341,22 @@ impl MedullaServer {
                             })?;
                         cache.index_task(&updated).map_err(McpError::from)?;
 
+                        // Recompute embedding if embeddable content changed
+                        if params.title.is_some()
+                            || params.content.is_some()
+                            || params.add_tags.is_some()
+                            || params.remove_tags.is_some()
+                        {
+                            Self::try_compute_embedding(
+                                cache,
+                                &updated.base.id.to_string(),
+                                "task",
+                                &updated.base.title,
+                                updated.base.content.as_deref(),
+                                &updated.base.tags,
+                            );
+                        }
+
                         return Ok(Some(task_to_response(&updated)));
                     }
                 }
@@ -1901,6 +2390,22 @@ impl MedullaServer {
                                 id: params.id.clone(),
                             })?;
                         cache.index_note(&updated).map_err(McpError::from)?;
+
+                        // Recompute embedding if embeddable content changed
+                        if params.title.is_some()
+                            || params.content.is_some()
+                            || params.add_tags.is_some()
+                            || params.remove_tags.is_some()
+                        {
+                            Self::try_compute_embedding(
+                                cache,
+                                &updated.base.id.to_string(),
+                                "note",
+                                &updated.base.title,
+                                updated.base.content.as_deref(),
+                                &updated.base.tags,
+                            );
+                        }
 
                         return Ok(Some(note_to_response(&updated)));
                     }
@@ -1956,6 +2461,22 @@ impl MedullaServer {
                             })?;
                         cache.index_prompt(&updated).map_err(McpError::from)?;
 
+                        // Recompute embedding if embeddable content changed
+                        if params.title.is_some()
+                            || params.content.is_some()
+                            || params.add_tags.is_some()
+                            || params.remove_tags.is_some()
+                        {
+                            Self::try_compute_embedding(
+                                cache,
+                                &updated.base.id.to_string(),
+                                "prompt",
+                                &updated.base.title,
+                                updated.base.content.as_deref(),
+                                &updated.base.tags,
+                            );
+                        }
+
                         return Ok(Some(prompt_to_response(&updated)));
                     }
                 }
@@ -1997,6 +2518,22 @@ impl MedullaServer {
                             })?;
                         cache.index_component(&updated).map_err(McpError::from)?;
 
+                        // Recompute embedding if embeddable content changed
+                        if params.title.is_some()
+                            || params.content.is_some()
+                            || params.add_tags.is_some()
+                            || params.remove_tags.is_some()
+                        {
+                            Self::try_compute_embedding(
+                                cache,
+                                &updated.base.id.to_string(),
+                                "component",
+                                &updated.base.title,
+                                updated.base.content.as_deref(),
+                                &updated.base.tags,
+                            );
+                        }
+
                         return Ok(Some(component_to_response(&updated)));
                     }
                 }
@@ -2034,6 +2571,22 @@ impl MedullaServer {
                                 id: params.id.clone(),
                             })?;
                         cache.index_link(&updated).map_err(McpError::from)?;
+
+                        // Recompute embedding if embeddable content changed
+                        if params.title.is_some()
+                            || params.content.is_some()
+                            || params.add_tags.is_some()
+                            || params.remove_tags.is_some()
+                        {
+                            Self::try_compute_embedding(
+                                cache,
+                                &updated.base.id.to_string(),
+                                "link",
+                                &updated.base.title,
+                                updated.base.content.as_deref(),
+                                &updated.base.tags,
+                            );
+                        }
 
                         return Ok(Some(link_to_response(&updated)));
                     }

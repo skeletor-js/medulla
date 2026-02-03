@@ -4,12 +4,23 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::cache::SqliteCache;
+use crate::embeddings::Embedder;
 use crate::entity::{
     Component, ComponentStatus, Decision, DecisionStatus, Link, Note, Prompt, Relation,
     RelationType, Task, TaskStatus,
 };
 use crate::error::{MedullaError, Result};
 use crate::mcp::MedullaServer;
+use std::sync::OnceLock;
+
+/// Lazy-initialized embedding model for CLI.
+static CLI_EMBEDDER: OnceLock<std::result::Result<Embedder, String>> = OnceLock::new();
+
+/// Get the embedder for CLI operations.
+fn get_embedder() -> Option<&'static Embedder> {
+    let result = CLI_EMBEDDER.get_or_init(|| Embedder::new().map_err(|e| e.to_string()));
+    result.as_ref().ok()
+}
 use crate::storage::{
     ComponentUpdate, DecisionUpdate, LinkUpdate, LoroStore, NoteUpdate, PromptUpdate, TaskUpdate,
 };
@@ -1505,7 +1516,7 @@ pub fn handle_relation_list(entity_id: String, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_search(query: String, json: bool) -> Result<()> {
+pub fn handle_search(query: String, semantic: bool, json: bool) -> Result<()> {
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
     let cache = SqliteCache::open(store.medulla_dir())?;
@@ -1513,8 +1524,30 @@ pub fn handle_search(query: String, json: bool) -> Result<()> {
     // Sync cache with store
     store.sync_cache(&cache)?;
 
-    // Perform search across all entity types
-    let results = cache.search_all(&query, 50)?;
+    // Parse query for filters (type:, status:, tag:, created:)
+    let (search_text, filter) = crate::search::parse_query(&query);
+
+    if semantic {
+        return handle_search_semantic(&cache, &search_text, &filter, json);
+    }
+
+    // Determine search text (if empty after parsing, search all)
+    let search_query = if search_text.is_empty() { "*" } else { &search_text };
+
+    // Perform full-text search across all entity types (or filtered type)
+    let results = if let Some(ref entity_type) = filter.entity_type {
+        // Search only the specified entity type
+        cache.search_by_type(entity_type, search_query, 100)?
+    } else {
+        cache.search_all(search_query, 100)?
+    };
+
+    // Apply additional filters
+    let results: Vec<_> = results
+        .into_iter()
+        .filter(|r| matches_cli_filter(&cache, r, &filter))
+        .take(50)
+        .collect();
 
     if json {
         #[derive(serde::Serialize)]
@@ -1697,6 +1730,172 @@ pub fn handle_search(query: String, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Check if a fulltext search result matches the CLI filter.
+fn matches_cli_filter(
+    cache: &SqliteCache,
+    result: &crate::cache::SearchResult,
+    filter: &crate::search::SearchFilter,
+) -> bool {
+    // Get entity ID and type from result
+    let (entity_id, entity_type, result_status) = match result {
+        crate::cache::SearchResult::Decision(d) => (&d.id, "decision", Some(&d.status)),
+        crate::cache::SearchResult::Task(t) => (&t.id, "task", Some(&t.status)),
+        crate::cache::SearchResult::Component(c) => (&c.id, "component", Some(&c.status)),
+        crate::cache::SearchResult::Note(n) => (&n.id, "note", None),
+        crate::cache::SearchResult::Prompt(p) => (&p.id, "prompt", None),
+        crate::cache::SearchResult::Link(l) => (&l.id, "link", None),
+    };
+
+    // Check status filter (use status from search result for efficiency)
+    if let Some(ref required_status) = filter.status {
+        match result_status {
+            Some(actual) if actual == required_status => {}
+            _ => return false,
+        }
+    }
+
+    // If no tag or date filters, we're done
+    if filter.tags.is_empty() && filter.created_after.is_none() && filter.created_before.is_none() {
+        return true;
+    }
+
+    // Load full metadata for tag and date checks
+    let metadata = match cache.get_filter_metadata(entity_id, entity_type) {
+        Ok(Some(m)) => m,
+        _ => return false,
+    };
+
+    // Check tags
+    for required_tag in &filter.tags {
+        if !metadata.tags.iter().any(|t| t.eq_ignore_ascii_case(required_tag)) {
+            return false;
+        }
+    }
+
+    // Check dates
+    if let Some(ref after) = filter.created_after {
+        match &metadata.created_at {
+            Some(created) if created >= after => {}
+            _ => return false,
+        }
+    }
+
+    if let Some(ref before) = filter.created_before {
+        match &metadata.created_at {
+            Some(created) if created <= before => {}
+            _ => return false,
+        }
+    }
+
+    true
+}
+
+/// Handle semantic search using vector embeddings.
+fn handle_search_semantic(
+    cache: &SqliteCache,
+    query: &str,
+    filter: &crate::search::SearchFilter,
+    json: bool,
+) -> Result<()> {
+    let embedder = get_embedder().ok_or_else(|| {
+        MedullaError::Embedding("Embedding model not available. Try again later.".to_string())
+    })?;
+
+    // Compute query embedding
+    let query_embedding = embedder.embed(query)?;
+
+    // Perform semantic search with entity type filter
+    let results = cache.search_semantic(
+        &query_embedding,
+        filter.entity_type.as_deref(),
+        50,
+        0.3,
+    )?;
+
+    // Apply additional filters (status, tags, dates)
+    let results: Vec<_> = results
+        .into_iter()
+        .filter(|r| matches_semantic_filter(cache, r, filter))
+        .take(20)
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else if results.is_empty() {
+        println!("No semantically similar results found for '{}'.", query);
+        println!("\nHint: Semantic search requires entities to have embeddings.");
+        println!("Try running 'medulla cache rebuild' to generate embeddings for existing entities.");
+    } else {
+        println!("Semantic search results for '{}' (similarity threshold: 0.3):\n", query);
+        for r in results {
+            let type_upper = r.entity_type.to_uppercase();
+            println!(
+                "  [{type_upper}] {:03} ({}) {:.2}% - {}",
+                r.sequence_number,
+                &r.entity_id[..7.min(r.entity_id.len())],
+                r.score * 100.0,
+                r.title
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Check if a semantic search result matches the CLI filter.
+fn matches_semantic_filter(
+    cache: &SqliteCache,
+    result: &crate::cache::SemanticSearchResult,
+    filter: &crate::search::SearchFilter,
+) -> bool {
+    // If no advanced filters, always match
+    if filter.status.is_none()
+        && filter.tags.is_empty()
+        && filter.created_after.is_none()
+        && filter.created_before.is_none()
+    {
+        return true;
+    }
+
+    // Load filter metadata
+    let metadata = match cache.get_filter_metadata(&result.entity_id, &result.entity_type) {
+        Ok(Some(m)) => m,
+        _ => return false,
+    };
+
+    // Check status
+    if let Some(ref required_status) = filter.status {
+        match &metadata.status {
+            Some(actual) if actual == required_status => {}
+            _ => return false,
+        }
+    }
+
+    // Check tags
+    for required_tag in &filter.tags {
+        if !metadata.tags.iter().any(|t| t.eq_ignore_ascii_case(required_tag)) {
+            return false;
+        }
+    }
+
+    // Check dates
+    if let Some(ref after) = filter.created_after {
+        match &metadata.created_at {
+            Some(created) if created >= after => {}
+            _ => return false,
+        }
+    }
+
+    if let Some(ref before) = filter.created_before {
+        match &metadata.created_at {
+            Some(created) if created <= before => {}
+            _ => return false,
+        }
+    }
+
+    true
+}
+
 /// Start the MCP server with graceful shutdown support.
 ///
 /// Server startup flow:
@@ -1732,6 +1931,16 @@ pub fn handle_serve() -> Result<()> {
 
     // Sync cache with store
     store.sync_cache(&cache)?;
+
+    // Check performance thresholds
+    if let Ok(stats) = cache.get_stats() {
+        let loro_size = std::fs::metadata(root.join(".medulla/loro.db"))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        for warning in crate::warnings::check_thresholds(&stats, loro_size) {
+            tracing::warn!("{}", crate::warnings::format_warning(&warning));
+        }
+    }
 
     tracing::info!("Starting Medulla MCP server");
 
@@ -1807,4 +2016,168 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+}
+
+/// Handle cache stats command.
+pub fn handle_cache_stats(json: bool) -> Result<()> {
+    let root = find_project_root();
+    let store = LoroStore::open(&root)?;
+    let cache = SqliteCache::open(store.medulla_dir())?;
+
+    // Sync cache with store
+    store.sync_cache(&cache)?;
+
+    let stats = cache.get_stats()?;
+
+    // Get loro.db size
+    let loro_path = root.join(".medulla/loro.db");
+    let loro_size = std::fs::metadata(&loro_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    // Check for warnings
+    let warnings = crate::warnings::check_thresholds(&stats, loro_size);
+
+    if json {
+        #[derive(serde::Serialize)]
+        struct StatsJson {
+            entity_count: usize,
+            embedding_count: usize,
+            decisions: usize,
+            tasks: usize,
+            notes: usize,
+            prompts: usize,
+            components: usize,
+            links: usize,
+            relations: usize,
+            loro_db_size_bytes: u64,
+            warnings: Vec<String>,
+        }
+
+        let json_out = StatsJson {
+            entity_count: stats.entity_count,
+            embedding_count: stats.embedding_count,
+            decisions: stats.decisions,
+            tasks: stats.tasks,
+            notes: stats.notes,
+            prompts: stats.prompts,
+            components: stats.components,
+            links: stats.links,
+            relations: stats.relations,
+            loro_db_size_bytes: loro_size,
+            warnings: warnings
+                .iter()
+                .map(crate::warnings::format_warning)
+                .collect(),
+        };
+
+        println!("{}", serde_json::to_string_pretty(&json_out)?);
+    } else {
+        println!("Cache Statistics:");
+        println!("  Entities: {}", stats.entity_count);
+        println!("    Decisions:  {}", stats.decisions);
+        println!("    Tasks:      {}", stats.tasks);
+        println!("    Notes:      {}", stats.notes);
+        println!("    Prompts:    {}", stats.prompts);
+        println!("    Components: {}", stats.components);
+        println!("    Links:      {}", stats.links);
+        println!("  Relations: {}", stats.relations);
+        println!("  Embeddings: {}", stats.embedding_count);
+        println!(
+            "  loro.db size: {:.2} MB",
+            loro_size as f64 / (1024.0 * 1024.0)
+        );
+
+        if !warnings.is_empty() {
+            println!();
+            for warning in &warnings {
+                eprintln!("{}", crate::warnings::format_warning(warning));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle cache rebuild command.
+pub fn handle_cache_rebuild(json: bool) -> Result<()> {
+    let root = find_project_root();
+    let store = LoroStore::open(&root)?;
+    let cache = SqliteCache::open(store.medulla_dir())?;
+
+    // Clear the cache
+    cache.clear()?;
+
+    // Sync from store (rebuilds all index data)
+    store.sync_cache(&cache)?;
+
+    // Recompute all embeddings
+    let embedder = get_embedder();
+    if embedder.is_none() {
+        if !json {
+            eprintln!("Warning: Embedding model not available, skipping embedding regeneration");
+        }
+    }
+
+    let mut embedding_count = 0;
+    let mut errors = 0;
+
+    if let Some(embedder) = embedder {
+        // Process all entity types
+        // Each entity type is processed with (id, title, content, tags)
+        // Content comes from base.content for all types
+        for (entity_type, entities) in [
+            ("decision", store.list_decisions()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
+            ("task", store.list_tasks()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
+            ("note", store.list_notes()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
+            ("prompt", store.list_prompts()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.template.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
+            ("component", store.list_components()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
+            ("link", store.list_links()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
+        ] {
+            for (id, title, content, tags) in entities {
+                match cache.compute_and_store_embedding_if_changed(
+                    &id,
+                    entity_type,
+                    &title,
+                    content.as_deref(),
+                    &tags,
+                    embedder,
+                ) {
+                    Ok(true) => embedding_count += 1,
+                    Ok(false) => {} // Skipped (unchanged)
+                    Err(_) => errors += 1,
+                }
+            }
+        }
+    }
+
+    let stats = cache.get_stats()?;
+
+    if json {
+        #[derive(serde::Serialize)]
+        struct RebuildResult {
+            success: bool,
+            entity_count: usize,
+            embeddings_computed: usize,
+            embedding_errors: usize,
+        }
+
+        let result = RebuildResult {
+            success: true,
+            entity_count: stats.entity_count,
+            embeddings_computed: embedding_count,
+            embedding_errors: errors,
+        };
+
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!("Cache rebuilt successfully.");
+        println!("  Entities indexed: {}", stats.entity_count);
+        println!("  Embeddings computed: {}", embedding_count);
+        if errors > 0 {
+            eprintln!("  Embedding errors: {}", errors);
+        }
+    }
+
+    Ok(())
 }

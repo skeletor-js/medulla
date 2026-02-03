@@ -26,6 +26,9 @@ atty = "0.2"
 # Cache / Search
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# Embeddings
+fastembed = "4"
+
 # MCP Server
 rmcp = { version = "0.14", features = ["server", "macros", "transport-io"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "signal"] }
