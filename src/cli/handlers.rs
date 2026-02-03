@@ -1,6 +1,7 @@
 use std::env;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::cache::SqliteCache;
 use crate::entity::{
@@ -8,6 +9,7 @@ use crate::entity::{
     RelationType, Task, TaskStatus,
 };
 use crate::error::{MedullaError, Result};
+use crate::mcp::MedullaServer;
 use crate::storage::{
     ComponentUpdate, DecisionUpdate, LinkUpdate, LoroStore, NoteUpdate, PromptUpdate, TaskUpdate,
 };
@@ -1059,6 +1061,183 @@ pub fn handle_delete(id: String, force: bool) -> Result<()> {
     Ok(())
 }
 
+pub fn handle_tasks_ready(limit: u32, json: bool) -> Result<()> {
+    let root = find_project_root();
+    let store = LoroStore::open(&root)?;
+    let cache = SqliteCache::open(store.medulla_dir())?;
+
+    // Sync cache with store
+    store.sync_cache(&cache)?;
+
+    let ready_tasks = cache.get_ready_tasks(Some(limit))?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&ready_tasks)?);
+    } else if ready_tasks.is_empty() {
+        println!("No ready tasks found.");
+    } else {
+        println!("Ready tasks ({}): \n", ready_tasks.len());
+        for task in ready_tasks {
+            let due_str = task
+                .due_date
+                .as_ref()
+                .map(|d| format!(" due:{}", d))
+                .unwrap_or_default();
+            let assignee_str = task
+                .assignee
+                .as_ref()
+                .map(|a| format!(" @{}", a))
+                .unwrap_or_default();
+            println!(
+                "  {:03} ({}) [{}|{}]{}{} {}",
+                task.sequence_number,
+                &task.id[..7.min(task.id.len())],
+                task.status,
+                task.priority,
+                due_str,
+                assignee_str,
+                task.title
+            );
+        }
+    }
+
+    Ok(())
+}
+
+pub fn handle_tasks_next(json: bool) -> Result<()> {
+    let root = find_project_root();
+    let store = LoroStore::open(&root)?;
+    let cache = SqliteCache::open(store.medulla_dir())?;
+
+    // Sync cache with store
+    store.sync_cache(&cache)?;
+
+    let next_task = cache.get_next_task()?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&next_task)?);
+    } else if let Some(task) = next_task {
+        let due_str = task
+            .due_date
+            .as_ref()
+            .map(|d| format!(" due:{}", d))
+            .unwrap_or_default();
+        let assignee_str = task
+            .assignee
+            .as_ref()
+            .map(|a| format!(" @{}", a))
+            .unwrap_or_default();
+        println!("Next task:\n");
+        println!(
+            "  {:03} ({}) [{}|{}]{}{} {}",
+            task.sequence_number,
+            &task.id[..7.min(task.id.len())],
+            task.status,
+            task.priority,
+            due_str,
+            assignee_str,
+            task.title
+        );
+    } else {
+        println!("No ready tasks found.");
+    }
+
+    Ok(())
+}
+
+pub fn handle_tasks_blocked(id: Option<String>, json: bool) -> Result<()> {
+    let root = find_project_root();
+    let store = LoroStore::open(&root)?;
+    let cache = SqliteCache::open(store.medulla_dir())?;
+
+    // Sync cache with store
+    store.sync_cache(&cache)?;
+
+    if let Some(task_id) = id {
+        // Show blockers for a specific task
+        // First, resolve the task ID (could be sequence number or UUID prefix)
+        let resolved_id = resolve_task_id(&store, &task_id)?;
+        let blockers = cache.get_task_blockers(&resolved_id)?;
+
+        if json {
+            println!("{}", serde_json::to_string_pretty(&blockers)?);
+        } else if blockers.is_empty() {
+            println!("Task {} has no blockers.", task_id);
+        } else {
+            println!("Blockers for task {}:\n", task_id);
+            for blocker in blockers {
+                println!(
+                    "  {:03} ({}) [{}] {}",
+                    blocker.sequence_number,
+                    &blocker.id[..7.min(blocker.id.len())],
+                    blocker.status,
+                    blocker.title
+                );
+            }
+        }
+    } else {
+        // Show all blocked tasks
+        let blocked_tasks = cache.get_blocked_tasks(None)?;
+
+        if json {
+            println!("{}", serde_json::to_string_pretty(&blocked_tasks)?);
+        } else if blocked_tasks.is_empty() {
+            println!("No blocked tasks found.");
+        } else {
+            println!("Blocked tasks ({}):\n", blocked_tasks.len());
+            for task in blocked_tasks {
+                let due_str = task
+                    .due_date
+                    .as_ref()
+                    .map(|d| format!(" due:{}", d))
+                    .unwrap_or_default();
+                println!(
+                    "  {:03} ({}) [{}|{}]{} {}",
+                    task.sequence_number,
+                    &task.id[..7.min(task.id.len())],
+                    task.status,
+                    task.priority,
+                    due_str,
+                    task.title
+                );
+                println!("      blocked by:");
+                for blocker in &task.blockers {
+                    println!(
+                        "        - {:03} ({}) [{}] {}",
+                        blocker.sequence_number,
+                        &blocker.id[..7.min(blocker.id.len())],
+                        blocker.status,
+                        blocker.title
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Resolve a task ID from sequence number or UUID prefix to full UUID
+fn resolve_task_id(store: &LoroStore, id: &str) -> Result<String> {
+    // Try to parse as sequence number first
+    if let Ok(seq) = id.parse::<u32>() {
+        for task in store.list_tasks()? {
+            if task.base.sequence_number == seq {
+                return Ok(task.base.id.to_string());
+            }
+        }
+    } else {
+        // Search by UUID prefix
+        for task in store.list_tasks()? {
+            if task.base.id.to_string().starts_with(id) {
+                return Ok(task.base.id.to_string());
+            }
+        }
+    }
+
+    Err(MedullaError::EntityNotFound(id.to_string()))
+}
+
 pub fn handle_search(query: String, json: bool) -> Result<()> {
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
@@ -1249,4 +1428,116 @@ pub fn handle_search(query: String, json: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Start the MCP server with graceful shutdown support.
+///
+/// Server startup flow:
+/// 1. Open existing `LoroStore` (fail if not initialized)
+/// 2. Open/create `SqliteCache`, sync from Loro
+/// 3. Create `MedullaServer` with store + cache
+/// 4. Install signal handlers for graceful shutdown
+/// 5. Call `server.serve(rmcp::transport::io::stdio()).await`
+/// 6. Wait for shutdown signal
+pub fn handle_serve() -> Result<()> {
+    let root = find_project_root();
+
+    // Check if this is an initialized medulla project
+    if !root.join(".medulla").exists() {
+        return Err(MedullaError::Storage(
+            "Not a medulla project. Run `medulla init` first.".to_string(),
+        ));
+    }
+
+    // Set up tracing to stderr (stdout is reserved for MCP protocol)
+    let filter = tracing_subscriber::EnvFilter::try_from_env("MEDULLA_LOG_LEVEL")
+        .or_else(|_| tracing_subscriber::EnvFilter::try_from_env("RUST_LOG"))
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
+
+    // Open the store and cache
+    let store = LoroStore::open(&root)?;
+    let cache = SqliteCache::open(store.medulla_dir())?;
+
+    // Sync cache with store
+    store.sync_cache(&cache)?;
+
+    tracing::info!("Starting Medulla MCP server");
+
+    // Create the server
+    let server = MedullaServer::new(store, cache);
+
+    // Run the async server with tokio runtime
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| MedullaError::Storage(format!("Failed to create tokio runtime: {}", e)))?;
+
+    rt.block_on(async move {
+        run_server(server).await
+    })
+}
+
+/// Run the MCP server with graceful shutdown on SIGINT/SIGTERM.
+async fn run_server(server: MedullaServer) -> Result<()> {
+    use rmcp::transport::io::stdio;
+
+    let transport = stdio();
+
+    // Spawn the server task
+    let server_task = tokio::spawn(async move {
+        match server.serve(transport).await {
+            Ok(_) => {
+                tracing::info!("Server stopped");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Server error: {}", e);
+                Err(MedullaError::Storage(format!("MCP server error: {}", e)))
+            }
+        }
+    });
+
+    // Wait for shutdown signal or server completion
+    tokio::select! {
+        result = server_task => {
+            match result {
+                Ok(inner_result) => inner_result,
+                Err(e) => Err(MedullaError::Storage(format!("Server task panicked: {}", e))),
+            }
+        }
+        _ = shutdown_signal() => {
+            tracing::info!("Shutdown signal received, stopping server...");
+            // Give a brief moment for cleanup
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Ok(())
+        }
+    }
+}
+
+/// Wait for shutdown signal (Ctrl+C or SIGTERM).
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }

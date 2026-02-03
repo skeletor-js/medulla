@@ -931,7 +931,7 @@ impl SqliteCache {
         Ok(results)
     }
 
-    /// Sync the cache with the Loro store
+    /// Sync the cache with the Loro store (decisions and relations only - legacy)
     /// Returns true if a full reindex was performed
     pub fn sync_from_loro(
         &self,
@@ -952,6 +952,63 @@ impl SqliteCache {
 
         for decision in decisions {
             self.index_decision(decision)?;
+        }
+
+        for relation in relations {
+            self.index_relation(relation)?;
+        }
+
+        self.set_loro_version(loro_version)?;
+
+        Ok(true)
+    }
+
+    /// Sync the cache with all entity types from the Loro store
+    /// Returns true if a full reindex was performed
+    pub fn sync_from_loro_full(
+        &self,
+        decisions: &[Decision],
+        tasks: &[Task],
+        notes: &[Note],
+        prompts: &[Prompt],
+        components: &[Component],
+        links: &[Link],
+        relations: &[Relation],
+        loro_version: &str,
+    ) -> Result<bool> {
+        let stored_version = self.get_loro_version()?;
+
+        // If versions match, cache is up to date
+        if stored_version.as_deref() == Some(loro_version) {
+            return Ok(false);
+        }
+
+        // For now, do a full reindex
+        // TODO: Implement incremental sync by tracking individual entity versions
+        self.clear()?;
+
+        for decision in decisions {
+            self.index_decision(decision)?;
+        }
+
+        for task in tasks {
+            self.index_task(task)?;
+        }
+
+        for note in notes {
+            self.index_note(note)?;
+        }
+
+        for prompt in prompts {
+            self.index_prompt(prompt)?;
+        }
+
+        for component in components {
+            self.index_component(component)?;
+        }
+
+        for link in links {
+            self.index_link(link)?;
         }
 
         for relation in relations {
@@ -1252,7 +1309,7 @@ pub struct CachedRelation {
 }
 
 /// A task that is ready to work on (no unresolved blockers)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ReadyTask {
     pub id: String,
     pub sequence_number: u32,
@@ -1264,7 +1321,7 @@ pub struct ReadyTask {
 }
 
 /// A blocked task with information about what blocks it
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BlockedTask {
     pub id: String,
     pub sequence_number: u32,
@@ -1277,7 +1334,7 @@ pub struct BlockedTask {
 }
 
 /// Information about a task that blocks another task
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TaskBlocker {
     pub id: String,
     pub sequence_number: u32,
