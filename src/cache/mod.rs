@@ -1,6 +1,7 @@
 mod sqlite_cache;
 
 pub use sqlite_cache::{
-    CachedRelation, ComponentSearchResult, DecisionSearchResult, LinkSearchResult,
-    NoteSearchResult, PromptSearchResult, SearchResult, SqliteCache, TaskSearchResult,
+    BlockedTask, CachedRelation, ComponentSearchResult, DecisionSearchResult, LinkSearchResult,
+    NoteSearchResult, PromptSearchResult, ReadyTask, SearchResult, SqliteCache, TaskBlocker,
+    TaskSearchResult,
 };

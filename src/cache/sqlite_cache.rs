@@ -962,6 +962,198 @@ impl SqliteCache {
 
         Ok(true)
     }
+
+    // =========================================================================
+    // Task Queue Queries (Beads Parity)
+    // =========================================================================
+
+    /// Get tasks that are ready to work on (no unresolved blockers).
+    ///
+    /// A task is "ready" if:
+    /// - Its status is not "done"
+    /// - It has no incoming "blocks" relations from tasks that are not "done"
+    ///
+    /// Results are sorted by:
+    /// 1. Priority (urgent > high > normal > low)
+    /// 2. Due date (earliest first, nulls last)
+    /// 3. Sequence number (oldest first)
+    pub fn get_ready_tasks(&self, limit: Option<u32>) -> Result<Vec<ReadyTask>> {
+        let limit = limit.unwrap_or(50).min(100) as i64;
+
+        // Query for tasks that:
+        // 1. Are not done
+        // 2. Have no blocking relations from non-done tasks
+        //
+        // The subquery finds all task IDs that ARE blocked by non-done tasks,
+        // and we exclude those from our results.
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.sequence_number, t.title, t.status, t.priority, t.due_date, t.assignee
+             FROM tasks t
+             WHERE t.status != 'done'
+               AND t.id NOT IN (
+                   -- Tasks that have at least one non-done blocker
+                   SELECT r.target_id
+                   FROM relations r
+                   JOIN tasks blocker ON blocker.id = r.source_id
+                   WHERE r.relation_type = 'blocks'
+                     AND blocker.status != 'done'
+               )
+             ORDER BY
+               CASE t.priority
+                 WHEN 'urgent' THEN 1
+                 WHEN 'high' THEN 2
+                 WHEN 'normal' THEN 3
+                 WHEN 'low' THEN 4
+                 ELSE 5
+               END,
+               CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END,
+               t.due_date,
+               t.sequence_number
+             LIMIT ?1",
+        )?;
+
+        let results = stmt
+            .query_map(params![limit], |row: &rusqlite::Row| {
+                Ok(ReadyTask {
+                    id: row.get(0)?,
+                    sequence_number: row.get(1)?,
+                    title: row.get(2)?,
+                    status: row.get(3)?,
+                    priority: row.get(4)?,
+                    due_date: row.get(5)?,
+                    assignee: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    /// Get all blocked tasks with their blockers.
+    ///
+    /// A task is "blocked" if:
+    /// - Its status is not "done"
+    /// - It has at least one incoming "blocks" relation from a task that is not "done"
+    ///
+    /// Each blocked task includes a list of the tasks that are blocking it.
+    pub fn get_blocked_tasks(&self, limit: Option<u32>) -> Result<Vec<BlockedTask>> {
+        let limit = limit.unwrap_or(50).min(100) as i64;
+
+        // First, get all blocked tasks (tasks with non-done blockers)
+        let mut task_stmt = self.conn.prepare(
+            "SELECT DISTINCT t.id, t.sequence_number, t.title, t.status, t.priority, t.due_date, t.assignee
+             FROM tasks t
+             WHERE t.status != 'done'
+               AND t.id IN (
+                   -- Tasks that have at least one non-done blocker
+                   SELECT r.target_id
+                   FROM relations r
+                   JOIN tasks blocker ON blocker.id = r.source_id
+                   WHERE r.relation_type = 'blocks'
+                     AND blocker.status != 'done'
+               )
+             ORDER BY
+               CASE t.priority
+                 WHEN 'urgent' THEN 1
+                 WHEN 'high' THEN 2
+                 WHEN 'normal' THEN 3
+                 WHEN 'low' THEN 4
+                 ELSE 5
+               END,
+               t.sequence_number
+             LIMIT ?1",
+        )?;
+
+        let tasks: Vec<(String, u32, String, String, String, Option<String>, Option<String>)> =
+            task_stmt
+                .query_map(params![limit], |row: &rusqlite::Row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // For each blocked task, get its blockers
+        let mut blocker_stmt = self.conn.prepare(
+            "SELECT blocker.id, blocker.sequence_number, blocker.title, blocker.status
+             FROM relations r
+             JOIN tasks blocker ON blocker.id = r.source_id
+             WHERE r.relation_type = 'blocks'
+               AND r.target_id = ?1
+               AND blocker.status != 'done'
+             ORDER BY blocker.sequence_number",
+        )?;
+
+        let mut results = Vec::new();
+        for (id, seq, title, status, priority, due_date, assignee) in tasks {
+            let blockers: Vec<TaskBlocker> = blocker_stmt
+                .query_map(params![&id], |row: &rusqlite::Row| {
+                    Ok(TaskBlocker {
+                        id: row.get(0)?,
+                        sequence_number: row.get(1)?,
+                        title: row.get(2)?,
+                        status: row.get(3)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            results.push(BlockedTask {
+                id,
+                sequence_number: seq,
+                title,
+                status,
+                priority,
+                due_date,
+                assignee,
+                blockers,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Get the blockers for a specific task.
+    ///
+    /// Returns all non-done tasks that block the specified task.
+    /// Returns an empty list if the task has no blockers or doesn't exist.
+    pub fn get_task_blockers(&self, task_id: &str) -> Result<Vec<TaskBlocker>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT blocker.id, blocker.sequence_number, blocker.title, blocker.status
+             FROM relations r
+             JOIN tasks blocker ON blocker.id = r.source_id
+             WHERE r.relation_type = 'blocks'
+               AND r.target_id = ?1
+               AND blocker.status != 'done'
+             ORDER BY blocker.sequence_number",
+        )?;
+
+        let results = stmt
+            .query_map(params![task_id], |row: &rusqlite::Row| {
+                Ok(TaskBlocker {
+                    id: row.get(0)?,
+                    sequence_number: row.get(1)?,
+                    title: row.get(2)?,
+                    status: row.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    /// Get the single highest-priority ready task.
+    ///
+    /// Convenience method that returns the first task from `get_ready_tasks(limit=1)`.
+    pub fn get_next_task(&self) -> Result<Option<ReadyTask>> {
+        let tasks = self.get_ready_tasks(Some(1))?;
+        Ok(tasks.into_iter().next())
+    }
 }
 
 /// Search result from full-text search for decisions
@@ -1057,6 +1249,40 @@ pub struct CachedRelation {
     pub relation_type: String,
     pub created_at: String,
     pub created_by: Option<String>,
+}
+
+/// A task that is ready to work on (no unresolved blockers)
+#[derive(Debug, Clone)]
+pub struct ReadyTask {
+    pub id: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub due_date: Option<String>,
+    pub assignee: Option<String>,
+}
+
+/// A blocked task with information about what blocks it
+#[derive(Debug, Clone)]
+pub struct BlockedTask {
+    pub id: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub due_date: Option<String>,
+    pub assignee: Option<String>,
+    pub blockers: Vec<TaskBlocker>,
+}
+
+/// Information about a task that blocks another task
+#[derive(Debug, Clone)]
+pub struct TaskBlocker {
+    pub id: String,
+    pub sequence_number: u32,
+    pub title: String,
+    pub status: String,
 }
 
 // Implement From for rusqlite::Error
@@ -1183,5 +1409,275 @@ mod tests {
         // New version should reindex
         let reindexed = cache.sync_from_loro(&decisions, &relations, "v2").unwrap();
         assert!(reindexed);
+    }
+
+    // =========================================================================
+    // Task Queue Tests (Beads Parity)
+    // =========================================================================
+
+    use crate::entity::{RelationType, TaskPriority, TaskStatus};
+
+    fn create_task(title: &str, seq: u32, status: TaskStatus, priority: TaskPriority) -> Task {
+        let mut task = Task::new(title.to_string(), seq);
+        task.status = status;
+        task.priority = priority;
+        task
+    }
+
+    #[test]
+    fn test_get_ready_tasks_no_blockers() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create some tasks
+        let task1 = create_task("Task 1", 1, TaskStatus::Todo, TaskPriority::Normal);
+        let task2 = create_task("Task 2", 2, TaskStatus::InProgress, TaskPriority::High);
+        let task3 = create_task("Task 3", 3, TaskStatus::Done, TaskPriority::Urgent);
+
+        cache.index_task(&task1).unwrap();
+        cache.index_task(&task2).unwrap();
+        cache.index_task(&task3).unwrap();
+
+        // Get ready tasks
+        let ready = cache.get_ready_tasks(None).unwrap();
+
+        // Should have 2 ready tasks (task3 is done)
+        assert_eq!(ready.len(), 2);
+
+        // Should be sorted by priority (high before normal)
+        assert_eq!(ready[0].title, "Task 2"); // High priority
+        assert_eq!(ready[1].title, "Task 1"); // Normal priority
+    }
+
+    #[test]
+    fn test_get_ready_tasks_with_blockers() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create tasks
+        let task1 = create_task("Blocker Task", 1, TaskStatus::Todo, TaskPriority::Normal);
+        let task2 = create_task("Blocked Task", 2, TaskStatus::Todo, TaskPriority::Urgent);
+        let task3 = create_task("Free Task", 3, TaskStatus::Todo, TaskPriority::Low);
+
+        cache.index_task(&task1).unwrap();
+        cache.index_task(&task2).unwrap();
+        cache.index_task(&task3).unwrap();
+
+        // Task1 blocks Task2
+        let relation = Relation::new(
+            task1.base.id,
+            "task".to_string(),
+            task2.base.id,
+            "task".to_string(),
+            RelationType::Blocks,
+        );
+        cache.index_relation(&relation).unwrap();
+
+        // Get ready tasks
+        let ready = cache.get_ready_tasks(None).unwrap();
+
+        // Should have 2 ready tasks (task2 is blocked)
+        assert_eq!(ready.len(), 2);
+
+        // Task2 (urgent but blocked) should NOT be in the list
+        let titles: Vec<&str> = ready.iter().map(|t| t.title.as_str()).collect();
+        assert!(!titles.contains(&"Blocked Task"));
+        assert!(titles.contains(&"Blocker Task"));
+        assert!(titles.contains(&"Free Task"));
+    }
+
+    #[test]
+    fn test_get_ready_tasks_done_blocker_releases_task() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create tasks where blocker is done
+        let task1 = create_task("Done Blocker", 1, TaskStatus::Done, TaskPriority::Normal);
+        let task2 = create_task("Released Task", 2, TaskStatus::Todo, TaskPriority::High);
+
+        cache.index_task(&task1).unwrap();
+        cache.index_task(&task2).unwrap();
+
+        // Task1 blocks Task2, but Task1 is done
+        let relation = Relation::new(
+            task1.base.id,
+            "task".to_string(),
+            task2.base.id,
+            "task".to_string(),
+            RelationType::Blocks,
+        );
+        cache.index_relation(&relation).unwrap();
+
+        // Get ready tasks
+        let ready = cache.get_ready_tasks(None).unwrap();
+
+        // Task2 should be ready because its blocker is done
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].title, "Released Task");
+    }
+
+    #[test]
+    fn test_get_ready_tasks_priority_and_due_date_ordering() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        use chrono::NaiveDate;
+
+        // Create tasks with various priorities and due dates
+        let task1 = create_task("Normal no date", 1, TaskStatus::Todo, TaskPriority::Normal);
+        let mut task2 = create_task("Normal early date", 2, TaskStatus::Todo, TaskPriority::Normal);
+        task2.due_date = Some(NaiveDate::from_ymd_opt(2025, 1, 15).unwrap());
+        let mut task3 = create_task("Normal late date", 3, TaskStatus::Todo, TaskPriority::Normal);
+        task3.due_date = Some(NaiveDate::from_ymd_opt(2025, 2, 15).unwrap());
+        let task4 = create_task("High no date", 4, TaskStatus::Todo, TaskPriority::High);
+
+        cache.index_task(&task1).unwrap();
+        cache.index_task(&task2).unwrap();
+        cache.index_task(&task3).unwrap();
+        cache.index_task(&task4).unwrap();
+
+        let ready = cache.get_ready_tasks(None).unwrap();
+
+        assert_eq!(ready.len(), 4);
+        // High priority first
+        assert_eq!(ready[0].title, "High no date");
+        // Then normal priority, sorted by due date (earliest first, nulls last)
+        assert_eq!(ready[1].title, "Normal early date");
+        assert_eq!(ready[2].title, "Normal late date");
+        assert_eq!(ready[3].title, "Normal no date");
+    }
+
+    #[test]
+    fn test_get_blocked_tasks() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create tasks
+        let task1 = create_task("Blocker 1", 1, TaskStatus::Todo, TaskPriority::Normal);
+        let task2 = create_task("Blocker 2", 2, TaskStatus::InProgress, TaskPriority::Normal);
+        let task3 = create_task("Blocked Task", 3, TaskStatus::Todo, TaskPriority::Urgent);
+        let task4 = create_task("Free Task", 4, TaskStatus::Todo, TaskPriority::Normal);
+
+        cache.index_task(&task1).unwrap();
+        cache.index_task(&task2).unwrap();
+        cache.index_task(&task3).unwrap();
+        cache.index_task(&task4).unwrap();
+
+        // Task1 and Task2 both block Task3
+        let relation1 = Relation::new(
+            task1.base.id,
+            "task".to_string(),
+            task3.base.id,
+            "task".to_string(),
+            RelationType::Blocks,
+        );
+        let relation2 = Relation::new(
+            task2.base.id,
+            "task".to_string(),
+            task3.base.id,
+            "task".to_string(),
+            RelationType::Blocks,
+        );
+        cache.index_relation(&relation1).unwrap();
+        cache.index_relation(&relation2).unwrap();
+
+        // Get blocked tasks
+        let blocked = cache.get_blocked_tasks(None).unwrap();
+
+        // Should have 1 blocked task
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].title, "Blocked Task");
+        assert_eq!(blocked[0].blockers.len(), 2);
+
+        // Blockers should be sorted by sequence number
+        assert_eq!(blocked[0].blockers[0].title, "Blocker 1");
+        assert_eq!(blocked[0].blockers[1].title, "Blocker 2");
+    }
+
+    #[test]
+    fn test_get_task_blockers() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create tasks
+        let task1 = create_task("Blocker", 1, TaskStatus::Todo, TaskPriority::Normal);
+        let task2 = create_task("Blocked", 2, TaskStatus::Todo, TaskPriority::Normal);
+
+        cache.index_task(&task1).unwrap();
+        cache.index_task(&task2).unwrap();
+
+        // Task1 blocks Task2
+        let relation = Relation::new(
+            task1.base.id,
+            "task".to_string(),
+            task2.base.id,
+            "task".to_string(),
+            RelationType::Blocks,
+        );
+        cache.index_relation(&relation).unwrap();
+
+        // Get blockers for Task2
+        let blockers = cache.get_task_blockers(&task2.base.id.to_string()).unwrap();
+
+        assert_eq!(blockers.len(), 1);
+        assert_eq!(blockers[0].title, "Blocker");
+    }
+
+    #[test]
+    fn test_get_task_blockers_nonexistent_task() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Get blockers for non-existent task
+        let blockers = cache.get_task_blockers("nonexistent-id").unwrap();
+
+        // Should return empty list, not error
+        assert_eq!(blockers.len(), 0);
+    }
+
+    #[test]
+    fn test_get_next_task() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create tasks
+        let task1 = create_task("Low priority", 1, TaskStatus::Todo, TaskPriority::Low);
+        let task2 = create_task("Urgent priority", 2, TaskStatus::Todo, TaskPriority::Urgent);
+
+        cache.index_task(&task1).unwrap();
+        cache.index_task(&task2).unwrap();
+
+        // Get next task
+        let next = cache.get_next_task().unwrap();
+
+        assert!(next.is_some());
+        assert_eq!(next.unwrap().title, "Urgent priority");
+    }
+
+    #[test]
+    fn test_get_next_task_no_tasks() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Get next task when none exist
+        let next = cache.get_next_task().unwrap();
+
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn test_get_ready_tasks_limit() {
+        let tmp = TempDir::new().unwrap();
+        let cache = SqliteCache::open(tmp.path()).unwrap();
+
+        // Create 5 tasks
+        for i in 1..=5 {
+            let task = create_task(&format!("Task {}", i), i, TaskStatus::Todo, TaskPriority::Normal);
+            cache.index_task(&task).unwrap();
+        }
+
+        // Get with limit
+        let ready = cache.get_ready_tasks(Some(3)).unwrap();
+        assert_eq!(ready.len(), 3);
     }
 }

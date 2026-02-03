@@ -20,6 +20,7 @@ pub struct DecisionUpdate {
     pub status: Option<DecisionStatus>,
     pub content: Option<String>,
     pub context: Option<String>,
+    pub superseded_by: Option<Option<String>>,
     pub add_tags: Vec<String>,
     pub remove_tags: Vec<String>,
 }
@@ -214,6 +215,12 @@ impl LoroStore {
 
         if let Some(context) = updates.context {
             entity_map.insert("context", context)?;
+        }
+
+        if let Some(superseded_by) = updates.superseded_by {
+            if let Some(ref value) = superseded_by {
+                entity_map.insert("superseded_by", value.clone())?;
+            }
         }
 
         // Handle tag additions and removals
