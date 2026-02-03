@@ -4,13 +4,13 @@
 //! Generates human-readable markdown snapshots of all entities.
 //! These snapshots are derived views meant for browsing on GitHub.
 
+mod component;
 mod decision;
-mod task;
+mod link;
 mod note;
 mod prompt;
-mod component;
-mod link;
 mod readme;
+mod task;
 pub mod utils;
 
 use std::path::Path;
@@ -20,7 +20,7 @@ use chrono::Utc;
 use crate::storage::LoroStore;
 use crate::Result;
 
-pub use self::utils::{slugify, format_date, format_timestamp, short_uuid};
+pub use self::utils::{format_date, format_timestamp, short_uuid, slugify};
 
 /// Statistics about generated snapshot
 #[derive(Debug, Default)]
@@ -65,7 +65,9 @@ pub fn generate_snapshot(store: &LoroStore, snapshot_dir: &Path) -> Result<Snaps
     // Generate snapshots for each entity type
     let decision_files = decision::generate(store, snapshot_dir)?;
     stats.decisions = decision_files.iter().map(|f| f.entity_count).sum();
-    stats.files_generated.extend(decision_files.into_iter().map(|f| f.relative_path));
+    stats
+        .files_generated
+        .extend(decision_files.into_iter().map(|f| f.relative_path));
 
     let task_files = task::generate(store, snapshot_dir)?;
     for file in &task_files {
@@ -76,23 +78,33 @@ pub fn generate_snapshot(store: &LoroStore, snapshot_dir: &Path) -> Result<Snaps
         }
     }
     stats.tasks_total = stats.tasks_active + stats.tasks_completed;
-    stats.files_generated.extend(task_files.into_iter().map(|f| f.relative_path));
+    stats
+        .files_generated
+        .extend(task_files.into_iter().map(|f| f.relative_path));
 
     let note_files = note::generate(store, snapshot_dir)?;
     stats.notes = note_files.iter().map(|f| f.entity_count).sum();
-    stats.files_generated.extend(note_files.into_iter().map(|f| f.relative_path));
+    stats
+        .files_generated
+        .extend(note_files.into_iter().map(|f| f.relative_path));
 
     let prompt_files = prompt::generate(store, snapshot_dir)?;
     stats.prompts = prompt_files.iter().map(|f| f.entity_count).sum();
-    stats.files_generated.extend(prompt_files.into_iter().map(|f| f.relative_path));
+    stats
+        .files_generated
+        .extend(prompt_files.into_iter().map(|f| f.relative_path));
 
     let component_files = component::generate(store, snapshot_dir)?;
     stats.components = component_files.iter().map(|f| f.entity_count).sum();
-    stats.files_generated.extend(component_files.into_iter().map(|f| f.relative_path));
+    stats
+        .files_generated
+        .extend(component_files.into_iter().map(|f| f.relative_path));
 
     let link_files = link::generate(store, snapshot_dir)?;
     stats.links = link_files.iter().map(|f| f.entity_count).sum();
-    stats.files_generated.extend(link_files.into_iter().map(|f| f.relative_path));
+    stats
+        .files_generated
+        .extend(link_files.into_iter().map(|f| f.relative_path));
 
     // Generate README index (must be last to have all stats)
     readme::generate(store, snapshot_dir, &stats)?;
@@ -103,8 +115,9 @@ pub fn generate_snapshot(store: &LoroStore, snapshot_dir: &Path) -> Result<Snaps
 
 /// Generate YAML frontmatter block
 pub fn yaml_frontmatter<T: serde::Serialize>(data: &T) -> Result<String> {
-    let yaml = serde_yaml::to_string(data)
-        .map_err(|e| crate::error::MedullaError::Storage(format!("YAML serialization failed: {}", e)))?;
+    let yaml = serde_yaml::to_string(data).map_err(|e| {
+        crate::error::MedullaError::Storage(format!("YAML serialization failed: {}", e))
+    })?;
     Ok(format!("---\n{}---\n", yaml))
 }
 

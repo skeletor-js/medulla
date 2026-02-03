@@ -7,9 +7,9 @@ use crate::entity::{Component, Decision, TaskStatus};
 use crate::storage::LoroStore;
 use crate::Result;
 
-use super::SnapshotStats;
-use super::utils::{format_date, slugify, write_snapshot_file};
 use super::current_timestamp;
+use super::utils::{format_date, slugify, write_snapshot_file};
+use super::SnapshotStats;
 
 /// A recent activity entry for display
 struct RecentActivity {
@@ -43,7 +43,7 @@ fn collect_recent_activity(store: &LoroStore) -> Result<Vec<RecentActivity>> {
             activities.push(RecentActivity {
                 entity_type: "Task".to_string(),
                 title: task.base.title.clone(),
-                link: format!("tasks/active.md#{}",  task.base.sequence_number),
+                link: format!("tasks/active.md#{}", task.base.sequence_number),
                 status: Some(task.status.to_string()),
                 updated_at: task.base.updated_at,
             });
@@ -120,10 +120,7 @@ fn generate_decisions_section(decisions: &[Decision]) -> String {
         let filename = format!("{:03}-{}.md", decision.base.sequence_number, slug);
         section.push_str(&format!(
             "- [{:03} - {}](decisions/{}) `{}`\n",
-            decision.base.sequence_number,
-            decision.base.title,
-            filename,
-            decision.status
+            decision.base.sequence_number, decision.base.title, filename, decision.status
         ));
     }
 
@@ -146,9 +143,7 @@ fn generate_components_section(components: &[Component]) -> String {
         let slug = slugify(&component.base.title);
         section.push_str(&format!(
             "- [{}](components/{}.md) `{}`\n",
-            component.base.title,
-            slug,
-            component.status
+            component.base.title, slug, component.status
         ));
     }
 
@@ -166,7 +161,10 @@ pub fn generate(store: &LoroStore, snapshot_dir: &Path, stats: &SnapshotStats) -
     content.push_str("| Type | Count |\n");
     content.push_str("|------|-------|\n");
     content.push_str(&format!("| Decisions | {} |\n", stats.decisions));
-    content.push_str(&format!("| Tasks | {} ({} active) |\n", stats.tasks_total, stats.tasks_active));
+    content.push_str(&format!(
+        "| Tasks | {} ({} active) |\n",
+        stats.tasks_total, stats.tasks_active
+    ));
     content.push_str(&format!("| Notes | {} |\n", stats.notes));
     content.push_str(&format!("| Prompts | {} |\n", stats.prompts));
     content.push_str(&format!("| Components | {} |\n", stats.components));
@@ -182,7 +180,9 @@ pub fn generate(store: &LoroStore, snapshot_dir: &Path, stats: &SnapshotStats) -
         if !activities.is_empty() {
             content.push_str("## Recent Activity\n\n");
             for activity in activities.iter().take(5) {
-                let status_str = activity.status.as_ref()
+                let status_str = activity
+                    .status
+                    .as_ref()
                     .map(|s| format!(" - {}", s))
                     .unwrap_or_default();
                 content.push_str(&format!(
@@ -222,14 +222,14 @@ pub fn generate(store: &LoroStore, snapshot_dir: &Path, stats: &SnapshotStats) -
             sorted.sort_by(|a, b| b.base.updated_at.cmp(&a.base.updated_at));
             for note in sorted.iter().take(5) {
                 let slug = slugify(&note.base.title);
-                let type_str = note.note_type.as_ref()
+                let type_str = note
+                    .note_type
+                    .as_ref()
                     .map(|t| format!(" `{}`", t))
                     .unwrap_or_default();
                 content.push_str(&format!(
                     "- [{}](notes/{}.md){}\n",
-                    note.base.title,
-                    slug,
-                    type_str,
+                    note.base.title, slug, type_str,
                 ));
             }
             if sorted.len() > 5 {
@@ -246,11 +246,7 @@ pub fn generate(store: &LoroStore, snapshot_dir: &Path, stats: &SnapshotStats) -
             sorted.sort_by_key(|p| p.base.sequence_number);
             for prompt in &sorted {
                 let slug = slugify(&prompt.base.title);
-                content.push_str(&format!(
-                    "- [{}](prompts/{}.md)\n",
-                    prompt.base.title,
-                    slug,
-                ));
+                content.push_str(&format!("- [{}](prompts/{}.md)\n", prompt.base.title, slug,));
             }
             content.push('\n');
         }
@@ -263,14 +259,14 @@ pub fn generate(store: &LoroStore, snapshot_dir: &Path, stats: &SnapshotStats) -
             sorted.sort_by_key(|l| l.base.sequence_number);
             for link in &sorted {
                 let slug = slugify(&link.base.title);
-                let type_str = link.link_type.as_ref()
+                let type_str = link
+                    .link_type
+                    .as_ref()
                     .map(|t| format!(" `{}`", t))
                     .unwrap_or_default();
                 content.push_str(&format!(
                     "- [{}](links/{}.md){}\n",
-                    link.base.title,
-                    slug,
-                    type_str,
+                    link.base.title, slug, type_str,
                 ));
             }
             content.push('\n');

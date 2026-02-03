@@ -218,6 +218,7 @@ pub fn handle_add_decision(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_add_task(
     title: String,
     status: String,
@@ -366,6 +367,7 @@ pub fn handle_add_prompt(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_add_component(
     title: String,
     component_type: Option<String>,
@@ -720,6 +722,7 @@ fn parse_relation_string(s: &str) -> Result<(RelationType, uuid::Uuid)> {
     Ok((rel_type, target_id))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_update(
     id: String,
     title: Option<String>,
@@ -745,6 +748,7 @@ pub fn handle_update(
     let git_author = get_git_author();
 
     // Handle updates based on entity type
+    #[allow(clippy::field_reassign_with_default)]
     match entity {
         EntityRef::Decision(decision) => {
             let mut updates = DecisionUpdate::default();
@@ -1334,7 +1338,7 @@ pub fn handle_relation_add(
         source_type.clone(),
         target_uuid,
         target_type.clone(),
-        rel_type.clone(),
+        rel_type,
     );
 
     // Try to get git author
@@ -1362,11 +1366,7 @@ pub fn handle_relation_add(
     } else {
         println!(
             "Created '{}' relation: {} ({}) -> {} ({})",
-            rel_type,
-            source_id,
-            source_type,
-            target_id,
-            target_type
+            rel_type, source_id, source_type, target_id, target_type
         );
     }
 
@@ -1532,7 +1532,11 @@ pub fn handle_search(query: String, semantic: bool, json: bool) -> Result<()> {
     }
 
     // Determine search text (if empty after parsing, search all)
-    let search_query = if search_text.is_empty() { "*" } else { &search_text };
+    let search_query = if search_text.is_empty() {
+        "*"
+    } else {
+        &search_text
+    };
 
     // Perform full-text search across all entity types (or filtered type)
     let results = if let Some(ref entity_type) = filter.entity_type {
@@ -1767,7 +1771,11 @@ fn matches_cli_filter(
 
     // Check tags
     for required_tag in &filter.tags {
-        if !metadata.tags.iter().any(|t| t.eq_ignore_ascii_case(required_tag)) {
+        if !metadata
+            .tags
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(required_tag))
+        {
             return false;
         }
     }
@@ -1805,12 +1813,8 @@ fn handle_search_semantic(
     let query_embedding = embedder.embed(query)?;
 
     // Perform semantic search with entity type filter
-    let results = cache.search_semantic(
-        &query_embedding,
-        filter.entity_type.as_deref(),
-        50,
-        0.3,
-    )?;
+    let results =
+        cache.search_semantic(&query_embedding, filter.entity_type.as_deref(), 50, 0.3)?;
 
     // Apply additional filters (status, tags, dates)
     let results: Vec<_> = results
@@ -1824,9 +1828,14 @@ fn handle_search_semantic(
     } else if results.is_empty() {
         println!("No semantically similar results found for '{}'.", query);
         println!("\nHint: Semantic search requires entities to have embeddings.");
-        println!("Try running 'medulla cache rebuild' to generate embeddings for existing entities.");
+        println!(
+            "Try running 'medulla cache rebuild' to generate embeddings for existing entities."
+        );
     } else {
-        println!("Semantic search results for '{}' (similarity threshold: 0.3):\n", query);
+        println!(
+            "Semantic search results for '{}' (similarity threshold: 0.3):\n",
+            query
+        );
         for r in results {
             let type_upper = r.entity_type.to_uppercase();
             println!(
@@ -1873,7 +1882,11 @@ fn matches_semantic_filter(
 
     // Check tags
     for required_tag in &filter.tags {
-        if !metadata.tags.iter().any(|t| t.eq_ignore_ascii_case(required_tag)) {
+        if !metadata
+            .tags
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(required_tag))
+        {
             return false;
         }
     }
@@ -2004,7 +2017,7 @@ async fn run_server(server: MedullaServer) -> Result<()> {
 async fn run_http_server(server: MedullaServer, port: u16) -> Result<()> {
     use axum::{routing::get, Router};
     use rmcp::transport::streamable_http_server::{
-        session::local::LocalSessionManager, StreamableHttpService, StreamableHttpServerConfig,
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
     };
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
@@ -2021,11 +2034,8 @@ async fn run_http_server(server: MedullaServer, port: u16) -> Result<()> {
 
     // Create the MCP HTTP service
     let server_clone = server.clone();
-    let mcp_service = StreamableHttpService::new(
-        move || Ok(server_clone.clone()),
-        session_manager,
-        config,
-    );
+    let mcp_service =
+        StreamableHttpService::new(move || Ok(server_clone.clone()), session_manager, config);
 
     // Build the router with MCP and utility routes
     let router = Router::new()
@@ -2103,9 +2113,7 @@ pub fn handle_cache_stats(json: bool) -> Result<()> {
 
     // Get loro.db size
     let loro_path = root.join(".medulla/loro.db");
-    let loro_size = std::fs::metadata(&loro_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let loro_size = std::fs::metadata(&loro_path).map(|m| m.len()).unwrap_or(0);
 
     // Check for warnings
     let warnings = crate::warnings::check_thresholds(&stats, loro_size);
@@ -2185,10 +2193,8 @@ pub fn handle_cache_rebuild(json: bool) -> Result<()> {
 
     // Recompute all embeddings
     let embedder = get_embedder();
-    if embedder.is_none() {
-        if !json {
-            eprintln!("Warning: Embedding model not available, skipping embedding regeneration");
-        }
+    if embedder.is_none() && !json {
+        eprintln!("Warning: Embedding model not available, skipping embedding regeneration");
     }
 
     let mut embedding_count = 0;
@@ -2199,12 +2205,96 @@ pub fn handle_cache_rebuild(json: bool) -> Result<()> {
         // Each entity type is processed with (id, title, content, tags)
         // Content comes from base.content for all types
         for (entity_type, entities) in [
-            ("decision", store.list_decisions()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
-            ("task", store.list_tasks()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
-            ("note", store.list_notes()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
-            ("prompt", store.list_prompts()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.template.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
-            ("component", store.list_components()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
-            ("link", store.list_links()?.into_iter().map(|e| (e.base.id.to_string(), e.base.title.clone(), e.base.content.clone(), e.base.tags.clone())).collect::<Vec<_>>()),
+            (
+                "decision",
+                store
+                    .list_decisions()?
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.base.id.to_string(),
+                            e.base.title.clone(),
+                            e.base.content.clone(),
+                            e.base.tags.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                "task",
+                store
+                    .list_tasks()?
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.base.id.to_string(),
+                            e.base.title.clone(),
+                            e.base.content.clone(),
+                            e.base.tags.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                "note",
+                store
+                    .list_notes()?
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.base.id.to_string(),
+                            e.base.title.clone(),
+                            e.base.content.clone(),
+                            e.base.tags.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                "prompt",
+                store
+                    .list_prompts()?
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.base.id.to_string(),
+                            e.base.title.clone(),
+                            e.template.clone(),
+                            e.base.tags.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                "component",
+                store
+                    .list_components()?
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.base.id.to_string(),
+                            e.base.title.clone(),
+                            e.base.content.clone(),
+                            e.base.tags.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                "link",
+                store
+                    .list_links()?
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.base.id.to_string(),
+                            e.base.title.clone(),
+                            e.base.content.clone(),
+                            e.base.tags.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
         ] {
             for (id, title, content, tags) in entities {
                 match cache.compute_and_store_embedding_if_changed(
@@ -2416,9 +2506,8 @@ pub fn handle_hook_install(force: bool) -> Result<()> {
 pub fn handle_hook_uninstall() -> Result<()> {
     let root = find_project_root();
 
-    let git_dir = find_git_dir(&root).ok_or_else(|| {
-        MedullaError::Storage("Not a git repository.".to_string())
-    })?;
+    let git_dir = find_git_dir(&root)
+        .ok_or_else(|| MedullaError::Storage("Not a git repository.".to_string()))?;
 
     let hook_path = git_dir.join("hooks/pre-commit");
 
@@ -2429,7 +2518,7 @@ pub fn handle_hook_uninstall() -> Result<()> {
 
     if !is_medulla_hook(&hook_path) {
         return Err(MedullaError::Storage(
-            "Pre-commit hook is not a Medulla hook. Remove it manually if needed.".to_string()
+            "Pre-commit hook is not a Medulla hook. Remove it manually if needed.".to_string(),
         ));
     }
 
@@ -2477,8 +2566,8 @@ pub fn handle_hook_status() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     // =========================================================================
     // Hook-related tests
@@ -2514,7 +2603,11 @@ mod tests {
     fn test_is_medulla_hook_with_marker_only() {
         let tmp = TempDir::new().unwrap();
         let hook_path = tmp.path().join("pre-commit");
-        fs::write(&hook_path, format!("#!/bin/sh\n{}\necho test\n", HOOK_MARKER)).unwrap();
+        fs::write(
+            &hook_path,
+            format!("#!/bin/sh\n{}\necho test\n", HOOK_MARKER),
+        )
+        .unwrap();
 
         assert!(is_medulla_hook(&hook_path));
     }
@@ -2719,9 +2812,20 @@ mod tests {
         let uuid = "550e8400-e29b-41d4-a716-446655440000";
 
         // Valid relation types: implements, blocks, supersedes, references, belongs_to, documents
-        for rel_type in ["blocks", "implements", "supersedes", "references", "belongs_to", "documents"] {
+        for rel_type in [
+            "blocks",
+            "implements",
+            "supersedes",
+            "references",
+            "belongs_to",
+            "documents",
+        ] {
             let result = parse_relation_string(&format!("{}:{}", rel_type, uuid));
-            assert!(result.is_ok(), "Failed to parse relation type: {}", rel_type);
+            assert!(
+                result.is_ok(),
+                "Failed to parse relation type: {}",
+                rel_type
+            );
         }
     }
 }

@@ -10,8 +10,8 @@ use crate::entity::Note;
 use crate::storage::LoroStore;
 use crate::Result;
 
-use super::{yaml_frontmatter, GeneratedFile};
 use super::utils::{format_date, slugify, write_snapshot_file};
+use super::{yaml_frontmatter, GeneratedFile};
 
 #[derive(Serialize)]
 struct NoteFrontmatter {

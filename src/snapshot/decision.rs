@@ -9,8 +9,8 @@ use crate::entity::Decision;
 use crate::storage::LoroStore;
 use crate::Result;
 
-use super::{yaml_frontmatter, GeneratedFile};
 use super::utils::{format_date, slugify, write_snapshot_file};
+use super::{yaml_frontmatter, GeneratedFile};
 
 #[derive(Serialize)]
 struct DecisionFrontmatter {
@@ -53,7 +53,7 @@ fn generate_body(decision: &Decision) -> String {
         if !context.is_empty() {
             body.push_str("\n## Context\n\n");
             body.push_str(context);
-            body.push_str("\n");
+            body.push('\n');
         }
     }
 
@@ -64,7 +64,7 @@ fn generate_body(decision: &Decision) -> String {
                 body.push_str("\n## Decision\n\n");
             }
             body.push_str(content);
-            body.push_str("\n");
+            body.push('\n');
         }
     }
 

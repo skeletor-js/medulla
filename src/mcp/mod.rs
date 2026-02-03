@@ -3,15 +3,18 @@
 //! This module provides an MCP server that exposes Medulla's knowledge engine
 //! to AI tools like Claude Desktop, Cursor, and Copilot.
 
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::manual_async_fn)]
+
 pub mod error;
 pub mod resources;
 pub mod tools;
 
 use crate::cache::SqliteCache;
 use crate::embeddings::Embedder;
-use crate::entity::{
-    Component, Decision, EntityBase, Link, Note, Prompt, Task,
-};
+use crate::entity::{Component, Decision, EntityBase, Link, Note, Prompt, Task};
 use crate::storage::{
     ComponentUpdate, DecisionUpdate, LinkUpdate, LoroStore, NoteUpdate, PromptUpdate, TaskUpdate,
 };
@@ -155,9 +158,19 @@ impl MedullaServer {
     ) {
         if let Some(embedder) = Self::get_embedder() {
             if let Err(e) = cache.compute_and_store_embedding_if_changed(
-                entity_id, entity_type, title, content, tags, embedder,
+                entity_id,
+                entity_type,
+                title,
+                content,
+                tags,
+                embedder,
             ) {
-                tracing::warn!("Failed to compute embedding for {} {}: {}", entity_type, entity_id, e);
+                tracing::warn!(
+                    "Failed to compute embedding for {} {}: {}",
+                    entity_type,
+                    entity_id,
+                    e
+                );
             }
         }
     }
@@ -165,14 +178,22 @@ impl MedullaServer {
     /// Start the MCP server on the given transport.
     ///
     /// This method runs the server until the transport is closed or an error occurs.
-    pub async fn serve<T, E, A>(self, transport: T) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn serve<T, E, A>(
+        self,
+        transport: T,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: rmcp::transport::IntoTransport<RoleServer, E, A>,
         E: std::error::Error + Send + Sync + 'static,
     {
         use rmcp::service::ServiceExt;
-        let running = ServiceExt::serve(self, transport).await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-        running.waiting().await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        let running = ServiceExt::serve(self, transport)
+            .await
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        running
+            .waiting()
+            .await
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
         Ok(())
     }
 
@@ -233,8 +254,7 @@ impl MedullaServer {
                             .filter_map(|v| v.as_str().map(String::from))
                             .collect();
                     }
-                    if let Some(superseded_by) =
-                        props.get("superseded_by").and_then(|v| v.as_str())
+                    if let Some(superseded_by) = props.get("superseded_by").and_then(|v| v.as_str())
                     {
                         decision.superseded_by = Some(superseded_by.to_string());
                     }
@@ -351,8 +371,7 @@ impl MedullaServer {
                             .filter_map(|v| v.as_str().map(String::from))
                             .collect();
                     }
-                    if let Some(output_schema) =
-                        props.get("output_schema").and_then(|v| v.as_str())
+                    if let Some(output_schema) = props.get("output_schema").and_then(|v| v.as_str())
                     {
                         if output_schema.len() > validation::MAX_OUTPUT_SCHEMA_SIZE {
                             return Err(McpError::ValidationFailed {
@@ -468,8 +487,8 @@ impl MedullaServer {
             _ => unreachable!(), // Already validated
         };
 
-        let json = serde_json::to_string_pretty(&response)
-            .map_err(|e| McpError::InternalError {
+        let json =
+            serde_json::to_string_pretty(&response).map_err(|e| McpError::InternalError {
                 message: format!("Failed to serialize response: {}", e),
             })?;
 
@@ -481,7 +500,9 @@ impl MedullaServer {
     // ========================================================================
 
     /// Get an entity by ID (sequence number or UUID prefix).
-    #[tool(description = "Get an entity by ID (sequence number like '1' or UUID prefix like 'abc123')")]
+    #[tool(
+        description = "Get an entity by ID (sequence number like '1' or UUID prefix like 'abc123')"
+    )]
     pub async fn entity_get(
         &self,
         Parameters(params): Parameters<EntityGetParams>,
@@ -495,15 +516,13 @@ impl MedullaServer {
         if let Some(ref entity_type) = params.entity_type {
             validate_entity_type(entity_type)?;
 
-            let response = self
-                .find_entity_by_id(&store, entity_type, &params.id, is_sequence)?;
+            let response = self.find_entity_by_id(&store, entity_type, &params.id, is_sequence)?;
 
             if let Some(resp) = response {
-                let json = serde_json::to_string_pretty(&resp).map_err(|e| {
-                    McpError::InternalError {
+                let json =
+                    serde_json::to_string_pretty(&resp).map_err(|e| McpError::InternalError {
                         message: format!("Failed to serialize response: {}", e),
-                    }
-                })?;
+                    })?;
                 return Ok(CallToolResult::success(vec![Content::text(json)]));
             }
 
@@ -515,8 +534,8 @@ impl MedullaServer {
 
         // Search all entity types
         for entity_type in VALID_ENTITY_TYPES {
-            if let Some(response) = self
-                .find_entity_by_id(&store, entity_type, &params.id, is_sequence)?
+            if let Some(response) =
+                self.find_entity_by_id(&store, entity_type, &params.id, is_sequence)?
             {
                 let json = serde_json::to_string_pretty(&response).map_err(|e| {
                     McpError::InternalError {
@@ -665,11 +684,10 @@ impl MedullaServer {
             let response =
                 self.try_update_entity(&store, &cache, entity_type, &params, is_sequence)?;
             if let Some(resp) = response {
-                let json = serde_json::to_string_pretty(&resp).map_err(|e| {
-                    McpError::InternalError {
+                let json =
+                    serde_json::to_string_pretty(&resp).map_err(|e| McpError::InternalError {
                         message: format!("Failed to serialize response: {}", e),
-                    }
-                })?;
+                    })?;
                 return Ok(CallToolResult::success(vec![Content::text(json)]));
             }
         }
@@ -696,7 +714,8 @@ impl MedullaServer {
         let is_sequence = params.id.chars().all(|c| c.is_ascii_digit());
 
         for entity_type in VALID_ENTITY_TYPES {
-            let deleted = self.try_delete_entity(&store, &cache, entity_type, &params.id, is_sequence)?;
+            let deleted =
+                self.try_delete_entity(&store, &cache, entity_type, &params.id, is_sequence)?;
             if deleted {
                 return Ok(CallToolResult::success(vec![Content::text(format!(
                     "Entity {} deleted successfully",
@@ -744,18 +763,15 @@ impl MedullaServer {
                     match self.entity_create(Parameters(create_params)).await {
                         Ok(tool_result) => {
                             // Extract ID from the result
-                            let id = tool_result
-                                .content
-                                .first()
-                                .and_then(|c| {
-                                    if let RawContent::Text(ref t) = c.raw {
-                                        serde_json::from_str::<EntityResponse>(&t.text)
-                                            .ok()
-                                            .map(|r| r.id)
-                                    } else {
-                                        None
-                                    }
-                                });
+                            let id = tool_result.content.first().and_then(|c| {
+                                if let RawContent::Text(ref t) = c.raw {
+                                    serde_json::from_str::<EntityResponse>(&t.text)
+                                        .ok()
+                                        .map(|r| r.id)
+                                } else {
+                                    None
+                                }
+                            });
                             succeeded += 1;
                             BatchOperationResult {
                                 index,
@@ -1029,11 +1045,12 @@ impl MedullaServer {
         })?;
 
         // Compute query embedding
-        let query_embedding = embedder.embed(&params.query).map_err(|e| {
-            McpError::InternalError {
-                message: format!("Failed to compute query embedding: {}", e),
-            }
-        })?;
+        let query_embedding =
+            embedder
+                .embed(&params.query)
+                .map_err(|e| McpError::InternalError {
+                    message: format!("Failed to compute query embedding: {}", e),
+                })?;
 
         let cache = self.cache.lock().await;
         let limit = params.limit.unwrap_or(10).min(100) as usize;
@@ -1080,7 +1097,8 @@ impl MedullaServer {
         if params.query.is_none() && params.semantic_query.is_none() {
             return Err(McpError::ValidationFailed {
                 field: "query".to_string(),
-                message: "Either 'query' (fulltext) or 'semantic_query' must be provided".to_string(),
+                message: "Either 'query' (fulltext) or 'semantic_query' must be provided"
+                    .to_string(),
             }
             .into());
         }
@@ -1097,8 +1115,14 @@ impl MedullaServer {
             entity_type: params.entity_type.clone(),
             status: params.status.clone(),
             tags: params.tags.clone().unwrap_or_default(),
-            created_after: params.created_after.as_ref().and_then(|s| parse_datetime(s)),
-            created_before: params.created_before.as_ref().and_then(|s| parse_datetime(s)),
+            created_after: params
+                .created_after
+                .as_ref()
+                .and_then(|s| parse_datetime(s)),
+            created_before: params
+                .created_before
+                .as_ref()
+                .and_then(|s| parse_datetime(s)),
         };
 
         let mut results: Vec<serde_json::Value> = Vec::new();
@@ -1109,19 +1133,15 @@ impl MedullaServer {
                 message: "Embedding model not available".to_string(),
             })?;
 
-            let query_embedding = embedder.embed(semantic_query).map_err(|e| {
-                McpError::InternalError {
-                    message: format!("Failed to compute query embedding: {}", e),
-                }
-            })?;
+            let query_embedding =
+                embedder
+                    .embed(semantic_query)
+                    .map_err(|e| McpError::InternalError {
+                        message: format!("Failed to compute query embedding: {}", e),
+                    })?;
 
             let semantic_results = cache
-                .search_semantic(
-                    &query_embedding,
-                    filter.entity_type.as_deref(),
-                    limit,
-                    0.3,
-                )
+                .search_semantic(&query_embedding, filter.entity_type.as_deref(), limit, 0.3)
                 .map_err(|e| McpError::InternalError {
                     message: format!("Semantic search failed: {}", e),
                 })?;
@@ -1151,13 +1171,8 @@ impl MedullaServer {
             };
 
             for entity_type in types_to_search {
-                let fulltext_results = self.search_type_fulltext(
-                    &cache,
-                    entity_type,
-                    query,
-                    &filter,
-                    limit as i64,
-                )?;
+                let fulltext_results =
+                    self.search_type_fulltext(&cache, entity_type, query, &filter, limit as i64)?;
                 results.extend(fulltext_results);
             }
         }
@@ -1216,7 +1231,11 @@ impl MedullaServer {
 
         // Check tag filters (entity must have ALL specified tags)
         for required_tag in &filter.tags {
-            if !metadata.tags.iter().any(|t| t.eq_ignore_ascii_case(required_tag)) {
+            if !metadata
+                .tags
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(required_tag))
+            {
                 return false;
             }
         }
@@ -1377,7 +1396,9 @@ impl MedullaServer {
         let mut incoming: Vec<RelationResponse> = Vec::new();
 
         if direction == "from" || direction == "both" {
-            let relations = store.get_relations_from(&uuid_str).map_err(McpError::from)?;
+            let relations = store
+                .get_relations_from(&uuid_str)
+                .map_err(McpError::from)?;
             outgoing = relations.iter().map(relation_to_response).collect();
         }
 
@@ -1426,11 +1447,10 @@ impl MedullaServer {
                 "path": [from_uuid.to_string()],
                 "length": 0,
             });
-            let json = serde_json::to_string_pretty(&response).map_err(|e| {
-                McpError::InternalError {
+            let json =
+                serde_json::to_string_pretty(&response).map_err(|e| McpError::InternalError {
                     message: format!("Failed to serialize path: {}", e),
-                }
-            })?;
+                })?;
             return Ok(CallToolResult::success(vec![Content::text(json)]));
         }
 
@@ -1442,7 +1462,10 @@ impl MedullaServer {
         for r in &relations {
             let source = r.source_id.to_string();
             let target = r.target_id.to_string();
-            adjacency.entry(source.clone()).or_default().push(target.clone());
+            adjacency
+                .entry(source.clone())
+                .or_default()
+                .push(target.clone());
             adjacency.entry(target).or_default().push(source);
         }
 
@@ -1639,7 +1662,9 @@ impl MedullaServer {
         Parameters(params): Parameters<TaskReadyParams>,
     ) -> Result<CallToolResult, McpErrorData> {
         let cache = self.cache.lock().await;
-        let ready_tasks = cache.get_ready_tasks(params.limit).map_err(McpError::from)?;
+        let ready_tasks = cache
+            .get_ready_tasks(params.limit)
+            .map_err(McpError::from)?;
 
         let tasks: Vec<serde_json::Value> = ready_tasks
             .iter()
@@ -1720,7 +1745,9 @@ impl MedullaServer {
         }
 
         // Otherwise, get all blocked tasks
-        let blocked_tasks = cache.get_blocked_tasks(params.limit).map_err(McpError::from)?;
+        let blocked_tasks = cache
+            .get_blocked_tasks(params.limit)
+            .map_err(McpError::from)?;
 
         let tasks: Vec<serde_json::Value> = blocked_tasks
             .iter()
@@ -1816,7 +1843,9 @@ impl MedullaServer {
     // ========================================================================
 
     /// Mark a task as done.
-    #[tool(description = "Mark a task as done (convenience wrapper for entity_update with status=done)")]
+    #[tool(
+        description = "Mark a task as done (convenience wrapper for entity_update with status=done)"
+    )]
     pub async fn task_complete(
         &self,
         Parameters(params): Parameters<TaskCompleteParams>,
@@ -2028,13 +2057,14 @@ impl MedullaServer {
             self.resolve_entity_id_with_type(&store, &params.target_id)?;
 
         // Parse and validate relation type
-        let relation_type: crate::entity::RelationType = params
-            .relation_type
-            .parse()
-            .map_err(|e: String| McpError::ValidationFailed {
-                field: "relation_type".to_string(),
-                message: e,
-            })?;
+        let relation_type: crate::entity::RelationType =
+            params
+                .relation_type
+                .parse()
+                .map_err(|e: String| McpError::ValidationFailed {
+                    field: "relation_type".to_string(),
+                    message: e,
+                })?;
 
         // Create the relation
         let relation = crate::entity::Relation::new(
@@ -2091,21 +2121,17 @@ impl MedullaServer {
         let (target_uuid, _) = self.resolve_entity_id_with_type(&store, &params.target_id)?;
 
         // Parse and validate relation type
-        let relation_type: crate::entity::RelationType = params
-            .relation_type
-            .parse()
-            .map_err(|e: String| McpError::ValidationFailed {
-                field: "relation_type".to_string(),
-                message: e,
-            })?;
+        let relation_type: crate::entity::RelationType =
+            params
+                .relation_type
+                .parse()
+                .map_err(|e: String| McpError::ValidationFailed {
+                    field: "relation_type".to_string(),
+                    message: e,
+                })?;
 
         // Build the composite key for cache deletion
-        let composite_key = format!(
-            "{}:{}:{}",
-            source_uuid,
-            relation_type,
-            target_uuid
-        );
+        let composite_key = format!("{}:{}:{}", source_uuid, relation_type, target_uuid);
 
         // Delete from store (takes individual parameters)
         store
@@ -2118,7 +2144,9 @@ impl MedullaServer {
         store.save().map_err(McpError::from)?;
 
         // Delete from cache (takes composite key)
-        cache.remove_relation(&composite_key).map_err(McpError::from)?;
+        cache
+            .remove_relation(&composite_key)
+            .map_err(McpError::from)?;
 
         let response = serde_json::json!({
             "deleted": true,
@@ -2612,7 +2640,9 @@ impl MedullaServer {
                     if self.matches_id(&d.base, id, is_sequence) {
                         store.delete_decision(&d.base.id).map_err(McpError::from)?;
                         store.save().map_err(McpError::from)?;
-                        cache.remove_decision(&d.base.id.to_string()).map_err(McpError::from)?;
+                        cache
+                            .remove_decision(&d.base.id.to_string())
+                            .map_err(McpError::from)?;
                         return Ok(true);
                     }
                 }
@@ -2623,7 +2653,9 @@ impl MedullaServer {
                     if self.matches_id(&t.base, id, is_sequence) {
                         store.delete_task(&t.base.id).map_err(McpError::from)?;
                         store.save().map_err(McpError::from)?;
-                        cache.remove_task(&t.base.id.to_string()).map_err(McpError::from)?;
+                        cache
+                            .remove_task(&t.base.id.to_string())
+                            .map_err(McpError::from)?;
                         return Ok(true);
                     }
                 }
@@ -2634,7 +2666,9 @@ impl MedullaServer {
                     if self.matches_id(&n.base, id, is_sequence) {
                         store.delete_note(&n.base.id).map_err(McpError::from)?;
                         store.save().map_err(McpError::from)?;
-                        cache.remove_note(&n.base.id.to_string()).map_err(McpError::from)?;
+                        cache
+                            .remove_note(&n.base.id.to_string())
+                            .map_err(McpError::from)?;
                         return Ok(true);
                     }
                 }
@@ -2645,7 +2679,9 @@ impl MedullaServer {
                     if self.matches_id(&p.base, id, is_sequence) {
                         store.delete_prompt(&p.base.id).map_err(McpError::from)?;
                         store.save().map_err(McpError::from)?;
-                        cache.remove_prompt(&p.base.id.to_string()).map_err(McpError::from)?;
+                        cache
+                            .remove_prompt(&p.base.id.to_string())
+                            .map_err(McpError::from)?;
                         return Ok(true);
                     }
                 }
@@ -2656,7 +2692,9 @@ impl MedullaServer {
                     if self.matches_id(&c.base, id, is_sequence) {
                         store.delete_component(&c.base.id).map_err(McpError::from)?;
                         store.save().map_err(McpError::from)?;
-                        cache.remove_component(&c.base.id.to_string()).map_err(McpError::from)?;
+                        cache
+                            .remove_component(&c.base.id.to_string())
+                            .map_err(McpError::from)?;
                         return Ok(true);
                     }
                 }
@@ -2667,7 +2705,9 @@ impl MedullaServer {
                     if self.matches_id(&l.base, id, is_sequence) {
                         store.delete_link(&l.base.id).map_err(McpError::from)?;
                         store.save().map_err(McpError::from)?;
-                        cache.remove_link(&l.base.id.to_string()).map_err(McpError::from)?;
+                        cache
+                            .remove_link(&l.base.id.to_string())
+                            .map_err(McpError::from)?;
                         return Ok(true);
                     }
                 }
@@ -2677,11 +2717,7 @@ impl MedullaServer {
         Ok(false)
     }
 
-    fn resolve_entity_id(
-        &self,
-        store: &LoroStore,
-        id: &str,
-    ) -> Result<uuid::Uuid, McpError> {
+    fn resolve_entity_id(&self, store: &LoroStore, id: &str) -> Result<uuid::Uuid, McpError> {
         let is_sequence = id.chars().all(|c| c.is_ascii_digit());
 
         for entity_type in VALID_ENTITY_TYPES {
@@ -3408,7 +3444,10 @@ mod tests {
             let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
             assert_eq!(parsed["total"], 2);
             // High priority should come first
-            assert!(parsed["tasks"][0]["title"].as_str().unwrap().contains("High"));
+            assert!(parsed["tasks"][0]["title"]
+                .as_str()
+                .unwrap()
+                .contains("High"));
         }
     }
 
@@ -3615,7 +3654,7 @@ mod tests {
         if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
             let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
             assert_eq!(parsed["succeeded"], 2); // create and update succeed
-            assert_eq!(parsed["failed"], 1);    // delete fails
+            assert_eq!(parsed["failed"], 1); // delete fails
         }
     }
 }

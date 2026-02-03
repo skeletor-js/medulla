@@ -1,3 +1,11 @@
+#![allow(clippy::len_zero)]
+#![allow(clippy::map_entry)]
+#![allow(clippy::useless_vec)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::explicit_auto_deref)]
+#![allow(clippy::field_reassign_with_default)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -183,7 +191,14 @@ impl LoroStore {
             .unwrap();
 
         let mut max_seq: u32 = 0;
-        for entity_type in &["decisions", "tasks", "notes", "prompts", "components", "links"] {
+        for entity_type in &[
+            "decisions",
+            "tasks",
+            "notes",
+            "prompts",
+            "components",
+            "links",
+        ] {
             if let Some(ValueOrContainer::Value(LoroValue::I64(n))) = sequences.get(*entity_type) {
                 max_seq = max_seq.max(n as u32);
             }

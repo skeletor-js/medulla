@@ -41,7 +41,14 @@ pub fn slugify(title: &str) -> String {
 
 /// Ensure the snapshot directory structure exists
 pub fn ensure_snapshot_dirs(snapshot_dir: &Path) -> Result<()> {
-    let subdirs = ["decisions", "tasks", "notes", "prompts", "components", "links"];
+    let subdirs = [
+        "decisions",
+        "tasks",
+        "notes",
+        "prompts",
+        "components",
+        "links",
+    ];
 
     for subdir in &subdirs {
         fs::create_dir_all(snapshot_dir.join(subdir))?;

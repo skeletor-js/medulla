@@ -27,7 +27,10 @@ pub enum McpError {
     EntityNotFound { id: String },
 
     #[error("Invalid entity type '{provided}'. Valid types: {}", valid.join(", "))]
-    EntityTypeInvalid { provided: String, valid: Vec<String> },
+    EntityTypeInvalid {
+        provided: String,
+        valid: Vec<String>,
+    },
 
     // Validation errors
     #[error("Validation failed for field '{field}': {message}")]
@@ -194,14 +197,8 @@ impl From<MedullaError> for McpError {
 }
 
 /// Valid entity types for validation.
-pub const VALID_ENTITY_TYPES: &[&str] = &[
-    "decision",
-    "task",
-    "note",
-    "prompt",
-    "component",
-    "link",
-];
+pub const VALID_ENTITY_TYPES: &[&str] =
+    &["decision", "task", "note", "prompt", "component", "link"];
 
 /// Validation constants.
 pub mod validation {

@@ -2,7 +2,7 @@
 
 > A git-native, AI-accessible knowledge engine for software projects.
 
-**Status**: Phase 3 Complete — Semantic Search & Filters Implemented
+**Status**: Phase 5 Complete — HTTP Transport & Distribution Ready
 **Date**: 2025-01-30
 **Updated**: 2026-02-02
 **Authors**: Jordan Stella, Claude
@@ -968,17 +968,19 @@ medulla add decision "Use Postgres" --edit  # Opens $EDITOR with template
 
 **Phase 4 Complete:** Full snapshot generation with YAML frontmatter, git hook integration with fast-path optimization.
 
-### Phase 5: Polish & Distribution
+### Phase 5: Polish & Distribution ✓ COMPLETE
 
-- [ ] HTTP transport for web UIs (`medulla serve --http 3000`)
-- [ ] OpenAPI documentation for HTTP mode
+- [x] HTTP transport for web UIs (`medulla serve --http 3000`)
+- [x] OpenAPI documentation for HTTP mode
 - [x] `medulla cache rebuild` command (implemented in Phase 3)
 - [ ] Homebrew formula
 - [ ] Cargo install (`cargo install medulla`)
-- [ ] Documentation site (medulla.cc)
+
+**Phase 5 Complete:** HTTP transport with SSE support, OpenAPI documentation at `/openapi.json`.
 
 ### Future Enhancements
 
+- [ ] Documentation site (medulla.cc)
 - [ ] GitHub Issues sync (import/export)
 - [ ] Team features (permissions, roles)
 - [ ] Encryption at rest
@@ -1025,7 +1027,8 @@ Before implementation begins, the following areas need design decisions or furth
 7. ~~**Phase 2**: Implement MCP server — see [docs/plans/2025-01-31-phase2-mcp-server-design.md](plans/2025-01-31-phase2-mcp-server-design.md).~~ ✓ Complete
 8. **Phase 2 Manual Validation**: ~~Test MCP server with Claude Desktop and MCP Inspector — see [docs/testing/manual-mcp-testing.md](testing/manual-mcp-testing.md).~~ ✓ Complete
 9. ~~**Phase 3**: Implement semantic search and search filters.~~ ✓ Complete
-10. **Phase 4**: Implement snapshot generation and git hook integration.
+10. ~~**Phase 4**: Implement snapshot generation and git hook integration.~~ ✓ Complete
+11. ~~**Phase 5**: Implement HTTP transport and distribution.~~ ✓ Complete
 
 ### Open Design Questions ✓ All Resolved
 
@@ -1078,5 +1081,5 @@ Before moving to each phase, validate:
 1. **After Phase 1**: Can two branches with different decisions merge cleanly via git? ✓ Yes
 2. **After Phase 2**: Can Claude Desktop query and create decisions via MCP? ✓ Yes (Manual validation complete)
 3. **After Phase 3**: Does semantic search return relevant results? Are embeddings computed within ~200ms? ✓ Yes
-4. **After Phase 4**: Is the snapshot readable on GitHub without any tooling?
-5. **After Phase 5**: Can users install via Homebrew and `cargo install`?
+4. **After Phase 4**: Is the snapshot readable on GitHub without any tooling? ✓ Yes
+5. **After Phase 5**: Can users install via Homebrew and `cargo install`? (Homebrew and cargo install pending)

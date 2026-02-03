@@ -4,6 +4,8 @@
 //! static resources (schema, stats) and dynamic resources (entities by type,
 //! individual entities, task queues, etc.).
 
+#![allow(clippy::manual_strip)]
+
 use crate::cache::SqliteCache;
 use crate::mcp::error::{McpError, VALID_ENTITY_TYPES};
 use crate::mcp::tools::*;

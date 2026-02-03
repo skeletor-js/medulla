@@ -7,9 +7,9 @@ use crate::entity::{Task, TaskPriority, TaskStatus};
 use crate::storage::LoroStore;
 use crate::Result;
 
-use super::GeneratedFile;
-use super::utils::{short_uuid, write_snapshot_file};
 use super::current_timestamp;
+use super::utils::{short_uuid, write_snapshot_file};
+use super::GeneratedFile;
 
 /// Format a single task line
 fn format_task_line(task: &Task) -> String {
@@ -89,23 +89,18 @@ fn generate_active(tasks: &[&Task], snapshot_dir: &Path) -> Result<GeneratedFile
         ];
 
         for (priority, heading) in priorities {
-            let priority_tasks: Vec<_> = tasks
-                .iter()
-                .filter(|t| t.priority == priority)
-                .collect();
+            let priority_tasks: Vec<_> = tasks.iter().filter(|t| t.priority == priority).collect();
 
             if !priority_tasks.is_empty() {
                 content.push_str(&format!("## {}\n\n", heading));
 
                 // Sort by due date (soonest first), then by sequence number
                 let mut sorted = priority_tasks;
-                sorted.sort_by(|a, b| {
-                    match (&a.due_date, &b.due_date) {
-                        (Some(a_date), Some(b_date)) => a_date.cmp(b_date),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => a.base.sequence_number.cmp(&b.base.sequence_number),
-                    }
+                sorted.sort_by(|a, b| match (&a.due_date, &b.due_date) {
+                    (Some(a_date), Some(b_date)) => a_date.cmp(b_date),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.base.sequence_number.cmp(&b.base.sequence_number),
                 });
 
                 for task in sorted {
@@ -137,7 +132,7 @@ fn generate_completed(tasks: &[&Task], snapshot_dir: &Path) -> Result<GeneratedF
         content.push_str("*No completed tasks.*\n");
     } else {
         // Sort by updated_at (most recent first)
-        let mut sorted: Vec<_> = tasks.iter().copied().collect();
+        let mut sorted: Vec<_> = tasks.to_vec();
         sorted.sort_by(|a, b| b.base.updated_at.cmp(&a.base.updated_at));
 
         for task in sorted {
@@ -396,8 +391,7 @@ mod tests {
 
         assert_eq!(files.len(), 2);
 
-        let active_content =
-            std::fs::read_to_string(snapshot_dir.join("tasks/active.md")).unwrap();
+        let active_content = std::fs::read_to_string(snapshot_dir.join("tasks/active.md")).unwrap();
         let completed_content =
             std::fs::read_to_string(snapshot_dir.join("tasks/completed.md")).unwrap();
 

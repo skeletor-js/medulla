@@ -10,8 +10,8 @@ use crate::entity::Prompt;
 use crate::storage::LoroStore;
 use crate::Result;
 
-use super::{yaml_frontmatter, GeneratedFile};
 use super::utils::{format_date, slugify, write_snapshot_file};
+use super::{yaml_frontmatter, GeneratedFile};
 
 #[derive(Serialize)]
 struct PromptFrontmatter {
@@ -51,7 +51,7 @@ fn generate_body(prompt: &Prompt) -> String {
     if let Some(content) = &prompt.base.content {
         if !content.is_empty() {
             body.push_str(content);
-            body.push_str("\n");
+            body.push('\n');
         }
     }
 
@@ -60,7 +60,7 @@ fn generate_body(prompt: &Prompt) -> String {
         if !template.is_empty() {
             body.push_str("\n## Template\n\n");
             body.push_str(template);
-            body.push_str("\n");
+            body.push('\n');
         }
     }
 
@@ -71,7 +71,7 @@ fn generate_body(prompt: &Prompt) -> String {
             body.push_str("```json\n");
             body.push_str(schema);
             if !schema.ends_with('\n') {
-                body.push_str("\n");
+                body.push('\n');
             }
             body.push_str("```\n");
         }

@@ -738,9 +738,9 @@ impl SqliteCache {
     /// List all embeddings for a specific entity type.
     /// Returns tuples of (entity_id, embedding).
     pub fn list_embeddings_by_type(&self, entity_type: &str) -> Result<Vec<(String, Vec<f32>)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT entity_id, embedding FROM embeddings WHERE entity_type = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT entity_id, embedding FROM embeddings WHERE entity_type = ?1")?;
 
         let results = stmt
             .query_map([entity_type], |row| {
@@ -810,18 +810,18 @@ impl SqliteCache {
         let prompts: i64 = self
             .conn
             .query_row("SELECT COUNT(*) FROM prompts", [], |row| row.get(0))?;
-        let components: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM components", [], |row| row.get(0))?;
+        let components: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM components", [], |row| row.get(0))?;
         let links: i64 = self
             .conn
             .query_row("SELECT COUNT(*) FROM links", [], |row| row.get(0))?;
         let relations: i64 = self
             .conn
             .query_row("SELECT COUNT(*) FROM relations", [], |row| row.get(0))?;
-        let embeddings: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+        let embeddings: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
 
         let entity_count = (decisions + tasks + notes + prompts + components + links) as usize;
 
@@ -1106,7 +1106,12 @@ impl SqliteCache {
     }
 
     /// Search a specific entity type with full-text search.
-    pub fn search_by_type(&self, entity_type: &str, query: &str, limit: i64) -> Result<Vec<SearchResult>> {
+    pub fn search_by_type(
+        &self,
+        entity_type: &str,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<SearchResult>> {
         match entity_type {
             "decision" => {
                 let results = self.search_decisions(query, limit)?;
@@ -1184,7 +1189,11 @@ impl SqliteCache {
             .collect();
 
         // Sort by score descending
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Limit results
         results.truncate(limit);
@@ -1208,10 +1217,7 @@ impl SqliteCache {
             _ => return Ok(None),
         };
 
-        let query = format!(
-            "SELECT sequence_number, title FROM {} WHERE id = ?1",
-            table
-        );
+        let query = format!("SELECT sequence_number, title FROM {} WHERE id = ?1", table);
 
         let result: Option<(u32, String)> = self
             .conn
@@ -1267,7 +1273,12 @@ impl SqliteCache {
         Ok(result.map(|(status_opt, tags_str, created_at_str)| {
             // Parse tags from comma-separated string
             let tags = tags_str
-                .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+                .map(|s| {
+                    s.split(',')
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
 
             // Parse created_at
@@ -1369,6 +1380,7 @@ impl SqliteCache {
 
     /// Sync the cache with all entity types from the Loro store
     /// Returns true if a full reindex was performed
+    #[allow(clippy::too_many_arguments)]
     pub fn sync_from_loro_full(
         &self,
         decisions: &[Decision],
@@ -1525,20 +1537,28 @@ impl SqliteCache {
              LIMIT ?1",
         )?;
 
-        let tasks: Vec<(String, u32, String, String, String, Option<String>, Option<String>)> =
-            task_stmt
-                .query_map(params![limit], |row: &rusqlite::Row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                    ))
-                })?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+        #[allow(clippy::type_complexity)]
+        let tasks: Vec<(
+            String,
+            u32,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        )> = task_stmt
+            .query_map(params![limit], |row: &rusqlite::Row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         // For each blocked task, get its blockers
         let mut blocker_stmt = self.conn.prepare(
@@ -2099,9 +2119,19 @@ mod tests {
 
         // Create tasks with various priorities and due dates
         let task1 = create_task("Normal no date", 1, TaskStatus::Todo, TaskPriority::Normal);
-        let mut task2 = create_task("Normal early date", 2, TaskStatus::Todo, TaskPriority::Normal);
+        let mut task2 = create_task(
+            "Normal early date",
+            2,
+            TaskStatus::Todo,
+            TaskPriority::Normal,
+        );
         task2.due_date = Some(NaiveDate::from_ymd_opt(2025, 1, 15).unwrap());
-        let mut task3 = create_task("Normal late date", 3, TaskStatus::Todo, TaskPriority::Normal);
+        let mut task3 = create_task(
+            "Normal late date",
+            3,
+            TaskStatus::Todo,
+            TaskPriority::Normal,
+        );
         task3.due_date = Some(NaiveDate::from_ymd_opt(2025, 2, 15).unwrap());
         let task4 = create_task("High no date", 4, TaskStatus::Todo, TaskPriority::High);
 
@@ -2246,7 +2276,12 @@ mod tests {
 
         // Create 5 tasks
         for i in 1..=5 {
-            let task = create_task(&format!("Task {}", i), i, TaskStatus::Todo, TaskPriority::Normal);
+            let task = create_task(
+                &format!("Task {}", i),
+                i,
+                TaskStatus::Todo,
+                TaskPriority::Normal,
+            );
             cache.index_task(&task).unwrap();
         }
 
@@ -2359,9 +2394,7 @@ mod tests {
         cache
             .store_embedding("d1", "decision", &[1.0], "h1")
             .unwrap();
-        cache
-            .store_embedding("t1", "task", &[2.0], "h2")
-            .unwrap();
+        cache.store_embedding("t1", "task", &[2.0], "h2").unwrap();
 
         // List all
         let all = cache.list_all_embeddings(None).unwrap();
@@ -2382,9 +2415,7 @@ mod tests {
         cache
             .store_embedding("e1", "decision", &[1.0], "h1")
             .unwrap();
-        cache
-            .store_embedding("e2", "task", &[2.0], "h2")
-            .unwrap();
+        cache.store_embedding("e2", "task", &[2.0], "h2").unwrap();
 
         assert_eq!(cache.count_embeddings().unwrap(), 2);
     }
@@ -2569,12 +2600,7 @@ mod tests {
         // Store similar embeddings for both
         let embedding = vec![1.0, 0.0, 0.0];
         cache
-            .store_embedding(
-                &decision.base.id.to_string(),
-                "decision",
-                &embedding,
-                "h1",
-            )
+            .store_embedding(&decision.base.id.to_string(), "decision", &embedding, "h1")
             .unwrap();
         cache
             .store_embedding(&task.base.id.to_string(), "task", &embedding, "h2")

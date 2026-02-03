@@ -741,7 +741,14 @@ fn test_add_and_list_all_entity_types() {
         .unwrap();
 
     // List each type
-    for entity_type in ["decisions", "tasks", "notes", "prompts", "components", "links"] {
+    for entity_type in [
+        "decisions",
+        "tasks",
+        "notes",
+        "prompts",
+        "components",
+        "links",
+    ] {
         let output = medulla_cmd()
             .current_dir(tmp.path())
             .args(["list", entity_type])
@@ -872,7 +879,12 @@ fn test_snapshot_with_all_entity_types() {
     // Add one of each entity type
     medulla_cmd()
         .current_dir(tmp.path())
-        .args(["add", "decision", "Architecture Choice", "--status=accepted"])
+        .args([
+            "add",
+            "decision",
+            "Architecture Choice",
+            "--status=accepted",
+        ])
         .output()
         .unwrap();
 
@@ -902,7 +914,12 @@ fn test_snapshot_with_all_entity_types() {
 
     medulla_cmd()
         .current_dir(tmp.path())
-        .args(["add", "link", "Documentation", "--url=https://docs.example.com"])
+        .args([
+            "add",
+            "link",
+            "Documentation",
+            "--url=https://docs.example.com",
+        ])
         .output()
         .unwrap();
 
@@ -1027,7 +1044,13 @@ fn test_snapshot_task_files() {
     // Add active task
     medulla_cmd()
         .current_dir(tmp.path())
-        .args(["add", "task", "Active Task", "--status=todo", "--priority=high"])
+        .args([
+            "add",
+            "task",
+            "Active Task",
+            "--status=todo",
+            "--priority=high",
+        ])
         .output()
         .unwrap();
 
@@ -1451,8 +1474,11 @@ fn test_search_combined_filters() {
     medulla_cmd()
         .current_dir(tmp.path())
         .args([
-            "add", "decision", "API Design",
-            "--status=accepted", "--tag=api"
+            "add",
+            "decision",
+            "API Design",
+            "--status=accepted",
+            "--tag=api",
         ])
         .output()
         .unwrap();
@@ -1460,8 +1486,11 @@ fn test_search_combined_filters() {
     medulla_cmd()
         .current_dir(tmp.path())
         .args([
-            "add", "decision", "API Security",
-            "--status=proposed", "--tag=api"
+            "add",
+            "decision",
+            "API Security",
+            "--status=proposed",
+            "--tag=api",
         ])
         .output()
         .unwrap();
@@ -1469,8 +1498,11 @@ fn test_search_combined_filters() {
     medulla_cmd()
         .current_dir(tmp.path())
         .args([
-            "add", "decision", "Database Schema",
-            "--status=accepted", "--tag=database"
+            "add",
+            "decision",
+            "Database Schema",
+            "--status=accepted",
+            "--tag=database",
         ])
         .output()
         .unwrap();
