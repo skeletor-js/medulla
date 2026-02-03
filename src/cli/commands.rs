@@ -112,7 +112,11 @@ pub enum Commands {
     Tasks(TasksCommand),
 
     /// Start the MCP server
-    Serve,
+    Serve {
+        /// Run HTTP server on specified port instead of stdio
+        #[arg(long)]
+        http: Option<u16>,
+    },
 
     /// Manage relations between entities
     Relation(RelationCommand),

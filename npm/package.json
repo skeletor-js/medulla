@@ -1,0 +1,41 @@
+{
+  "name": "medulla-cc",
+  "version": "0.1.0",
+  "description": "A git-native, AI-accessible knowledge engine for software projects",
+  "keywords": [
+    "mcp",
+    "knowledge-base",
+    "ai",
+    "crdt",
+    "cli",
+    "model-context-protocol"
+  ],
+  "homepage": "https://github.com/skeletor-js/medulla",
+  "bugs": {
+    "url": "https://github.com/skeletor-js/medulla/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skeletor-js/medulla.git"
+  },
+  "license": "MIT",
+  "author": "Jordan Stella",
+  "bin": {
+    "medulla": "bin/medulla"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}

@@ -90,7 +90,7 @@ fn main() {
             TasksAction::Next { json } => handle_tasks_next(json),
             TasksAction::Blocked { id, json } => handle_tasks_blocked(id, json),
         },
-        Commands::Serve => handle_serve(),
+        Commands::Serve { http } => handle_serve(http),
         Commands::Relation(rel_cmd) => match rel_cmd.action {
             RelationAction::Add {
                 source_id,

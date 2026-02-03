@@ -4,7 +4,21 @@ version = "0.1.0"
 edition = "2021"
 description = "A git-native, AI-accessible knowledge engine for software projects"
 license = "MIT"
-repository = "https://github.com/jordanstella/medulla"
+repository = "https://github.com/skeletor-js/medulla"
+homepage = "https://github.com/skeletor-js/medulla"
+readme = "README.md"
+keywords = ["mcp", "knowledge-base", "ai", "crdt", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.75"
+
+[package.metadata.docs.rs]
+all-features = true
+
+exclude = [
+    ".github/",
+    "docs/",
+    "npm/",
+]
 
 [dependencies]
 # CLI
@@ -31,11 +45,16 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 fastembed = "4"
 
 # MCP Server
-rmcp = { version = "0.14", features = ["server", "macros", "transport-io"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "signal"] }
+rmcp = { version = "0.14", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "signal", "net"] }
 schemars = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP Server (for MCP HTTP transport)
+axum = "0.8"
+tokio-util = { version = "0.7", features = ["rt"] }
+tower = "0.5"
 
 [dev-dependencies]
 tempfile = "3"

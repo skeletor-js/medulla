@@ -1,0 +1,15 @@
+#!/bin/sh
+# Wrapper script for medulla binary
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Check if the binary exists
+if [ -f "$SCRIPT_DIR/medulla.exe" ]; then
+    exec "$SCRIPT_DIR/medulla.exe" "$@"
+elif [ -f "$SCRIPT_DIR/../medulla" ]; then
+    exec "$SCRIPT_DIR/../medulla" "$@"
+else
+    echo "Error: medulla binary not found. Try reinstalling with 'npm install -g medulla'" >&2
+    exit 1
+fi

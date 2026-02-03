@@ -1,0 +1,202 @@
+openapi: 3.0.3
+info:
+  title: Medulla MCP HTTP API
+  description: |
+    HTTP transport for Medulla's Model Context Protocol server.
+
+    This API provides HTTP-based access to the MCP server, enabling web UIs
+    and remote clients to interact with the Medulla knowledge engine.
+
+    The MCP protocol uses JSON-RPC 2.0 for all operations.
+  version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  contact:
+    url: https://github.com/skeletor-js/medulla
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+paths:
+  /mcp:
+    post:
+      summary: Send MCP JSON-RPC request
+      description: |
+        Send a JSON-RPC 2.0 request to the MCP server.
+        Supports all MCP methods including tools/call, resources/list, etc.
+      tags:
+        - MCP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonRpcRequest"
+            examples:
+              listTools:
+                summary: List available tools
+                value:
+                  jsonrpc: "2.0"
+                  method: "tools/list"
+                  id: 1
+              callTool:
+                summary: Call a tool
+                value:
+                  jsonrpc: "2.0"
+                  method: "tools/call"
+                  params:
+                    name: "entity_list"
+                    arguments:
+                      entity_type: "decision"
+                  id: 2
+      responses:
+        "200":
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonRpcResponse"
+            text/event-stream:
+              description: SSE stream for streaming responses
+              schema:
+                type: string
+
+    get:
+      summary: SSE stream for server-sent events
+      description: |
+        Establish an SSE connection for receiving server notifications.
+        Requires an Mcp-Session-Id header from a previous POST request.
+      tags:
+        - MCP
+      parameters:
+        - name: Mcp-Session-Id
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Session ID from a previous MCP request
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /health:
+    get:
+      summary: Health check
+      description: Returns OK if the server is healthy
+      tags:
+        - Health
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "OK"
+
+  /openapi.yaml:
+    get:
+      summary: OpenAPI specification
+      description: Returns this OpenAPI specification
+      tags:
+        - Documentation
+      responses:
+        "200":
+          description: OpenAPI YAML specification
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+components:
+  schemas:
+    JsonRpcRequest:
+      type: object
+      required:
+        - jsonrpc
+        - method
+        - id
+      properties:
+        jsonrpc:
+          type: string
+          enum: ["2.0"]
+          description: JSON-RPC protocol version
+        method:
+          type: string
+          description: |
+            MCP method name. Common methods include:
+            - tools/list: List available tools
+            - tools/call: Call a tool
+            - resources/list: List available resources
+            - resources/read: Read a resource
+          examples:
+            - tools/list
+            - tools/call
+            - resources/list
+            - resources/read
+        params:
+          type: object
+          description: Method parameters (varies by method)
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+          description: Request identifier
+
+    JsonRpcResponse:
+      type: object
+      required:
+        - jsonrpc
+        - id
+      properties:
+        jsonrpc:
+          type: string
+          enum: ["2.0"]
+        result:
+          type: object
+          description: Result data (present on success)
+        error:
+          $ref: "#/components/schemas/JsonRpcError"
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+
+    JsonRpcError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          description: |
+            Error code. Standard codes:
+            - -32001: Entity not found
+            - -32002: Invalid entity type
+            - -32003: Validation failed
+            - -32004: Relation target not found
+            - -32005: Resource not found
+            - -32006: Invalid resource URI
+            - -32010: Storage error
+            - -32011: Internal error
+        message:
+          type: string
+          description: Human-readable error message
+        data:
+          type: object
+          description: Additional error data
+
+tags:
+  - name: MCP
+    description: Model Context Protocol operations
+  - name: Health
+    description: Server health endpoints
+  - name: Documentation
+    description: API documentation

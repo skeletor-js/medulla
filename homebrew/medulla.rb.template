@@ -1,0 +1,40 @@
+# Homebrew formula template for Medulla
+# This file is updated automatically by the release workflow.
+# Do not edit manually.
+
+class Medulla < Formula
+  desc "A git-native, AI-accessible knowledge engine for software projects"
+  homepage "https://github.com/skeletor-js/medulla"
+  version "{{VERSION}}"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/skeletor-js/medulla/releases/download/v{{VERSION}}/medulla-v{{VERSION}}-aarch64-apple-darwin.tar.gz"
+      sha256 "{{SHA_MACOS_ARM}}"
+    end
+    on_intel do
+      url "https://github.com/skeletor-js/medulla/releases/download/v{{VERSION}}/medulla-v{{VERSION}}-x86_64-apple-darwin.tar.gz"
+      sha256 "{{SHA_MACOS_INTEL}}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/skeletor-js/medulla/releases/download/v{{VERSION}}/medulla-v{{VERSION}}-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "{{SHA_LINUX_ARM}}"
+    end
+    on_intel do
+      url "https://github.com/skeletor-js/medulla/releases/download/v{{VERSION}}/medulla-v{{VERSION}}-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "{{SHA_LINUX_INTEL}}"
+    end
+  end
+
+  def install
+    bin.install "medulla"
+  end
+
+  test do
+    system "#{bin}/medulla", "--version"
+  end
+end

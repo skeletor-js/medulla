@@ -1905,7 +1905,7 @@ fn matches_semantic_filter(
 /// 4. Install signal handlers for graceful shutdown
 /// 5. Call `server.serve(rmcp::transport::io::stdio()).await`
 /// 6. Wait for shutdown signal
-pub fn handle_serve() -> Result<()> {
+pub fn handle_serve(http_port: Option<u16>) -> Result<()> {
     let root = find_project_root();
 
     // Check if this is an initialized medulla project
@@ -1915,7 +1915,7 @@ pub fn handle_serve() -> Result<()> {
         ));
     }
 
-    // Set up tracing to stderr (stdout is reserved for MCP protocol)
+    // Set up tracing to stderr (stdout is reserved for MCP protocol in stdio mode)
     let filter = tracing_subscriber::EnvFilter::try_from_env("MEDULLA_LOG_LEVEL")
         .or_else(|_| tracing_subscriber::EnvFilter::try_from_env("RUST_LOG"))
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -1942,8 +1942,6 @@ pub fn handle_serve() -> Result<()> {
         }
     }
 
-    tracing::info!("Starting Medulla MCP server");
-
     // Create the server
     let server = MedullaServer::new(store, cache);
 
@@ -1952,11 +1950,20 @@ pub fn handle_serve() -> Result<()> {
         .map_err(|e| MedullaError::Storage(format!("Failed to create tokio runtime: {}", e)))?;
 
     rt.block_on(async move {
-        run_server(server).await
+        match http_port {
+            Some(port) => {
+                tracing::info!("Starting Medulla MCP HTTP server on port {}", port);
+                run_http_server(server, port).await
+            }
+            None => {
+                tracing::info!("Starting Medulla MCP server (stdio)");
+                run_server(server).await
+            }
+        }
     })
 }
 
-/// Run the MCP server with graceful shutdown on SIGINT/SIGTERM.
+/// Run the MCP server with graceful shutdown on SIGINT/SIGTERM (stdio transport).
 async fn run_server(server: MedullaServer) -> Result<()> {
     use rmcp::transport::io::stdio;
 
@@ -1991,6 +1998,71 @@ async fn run_server(server: MedullaServer) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Run the MCP server over HTTP with graceful shutdown.
+async fn run_http_server(server: MedullaServer, port: u16) -> Result<()> {
+    use axum::{routing::get, Router};
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpService, StreamableHttpServerConfig,
+    };
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+
+    let cancel_token = CancellationToken::new();
+    let config = StreamableHttpServerConfig {
+        sse_keep_alive: Some(Duration::from_secs(30)),
+        sse_retry: Some(Duration::from_secs(5)),
+        stateful_mode: true,
+        cancellation_token: cancel_token.clone(),
+    };
+
+    let session_manager = Arc::new(LocalSessionManager::default());
+
+    // Create the MCP HTTP service
+    let server_clone = server.clone();
+    let mcp_service = StreamableHttpService::new(
+        move || Ok(server_clone.clone()),
+        session_manager,
+        config,
+    );
+
+    // Build the router with MCP and utility routes
+    let router = Router::new()
+        .nest_service("/mcp", mcp_service)
+        .route("/health", get(|| async { "OK" }))
+        .route(
+            "/openapi.yaml",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/yaml")],
+                    include_str!("../../openapi.yaml"),
+                )
+            }),
+        );
+
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    tracing::info!("MCP HTTP server listening on http://{}", addr);
+    tracing::info!("  - MCP endpoint: http://{}/mcp", addr);
+    tracing::info!("  - Health check: http://{}/health", addr);
+    tracing::info!("  - OpenAPI spec: http://{}/openapi.yaml", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| MedullaError::Storage(format!("Failed to bind to port {}: {}", port, e)))?;
+
+    // Run server with graceful shutdown
+    let cancel_token_clone = cancel_token.clone();
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            tracing::info!("Shutdown signal received, stopping HTTP server...");
+            cancel_token_clone.cancel();
+        })
+        .await
+        .map_err(|e| MedullaError::Storage(format!("HTTP server error: {}", e)))?;
+
+    Ok(())
 }
 
 /// Wait for shutdown signal (Ctrl+C or SIGTERM).
