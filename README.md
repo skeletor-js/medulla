@@ -1,7 +1,5 @@
 # Medulla
 
-[![Crates.io](https://img.shields.io/crates/v/medulla)](https://crates.io/crates/medulla)
-[![NPM](https://img.shields.io/npm/v/medulla-cc)](https://www.npmjs.com/package/medulla-cc)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-purple)](https://modelcontextprotocol.io/)
