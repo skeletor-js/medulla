@@ -958,13 +958,15 @@ medulla add decision "Use Postgres" --edit  # Opens $EDITOR with template
 
 ### Phase 4: Snapshot & Git Integration
 
-- [ ] Markdown snapshot generation (`medulla snapshot`)
-- [ ] Pre-commit hook with fast-path (only runs if `loro.db` staged via `git diff --cached`)
-- [ ] Hook failure handling (abort commit, message suggests `--no-verify` escape)
-- [ ] `medulla hook install` / `medulla hook uninstall` commands
-- [ ] YAML frontmatter format for decisions
-- [ ] Grouped task files (active.md, completed.md)
-- [ ] Auto-generated README.md index
+- [x] Markdown snapshot generation (`medulla snapshot`)
+- [x] Pre-commit hook with fast-path (only runs if `loro.db` staged via `git diff --cached`)
+- [x] Hook failure handling (abort commit, message suggests `--no-verify` escape)
+- [x] `medulla hook install` / `medulla hook uninstall` commands
+- [x] YAML frontmatter format for decisions
+- [x] Grouped task files (active.md, completed.md)
+- [x] Auto-generated README.md index
+
+**Phase 4 Complete:** Full snapshot generation with YAML frontmatter, git hook integration with fast-path optimization.
 
 ### Phase 5: Polish & Distribution
 
