@@ -119,6 +119,20 @@ pub enum Commands {
 
     /// Cache management commands
     Cache(CacheCommand),
+
+    /// Generate markdown snapshot
+    Snapshot {
+        /// Output directory (default: .medulla/snapshot)
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Show verbose output with list of generated files
+        #[arg(long, short = 'v')]
+        verbose: bool,
+    },
+
+    /// Manage git hooks
+    Hook(HookCommand),
 }
 
 #[derive(Args, Debug)]
@@ -426,4 +440,26 @@ pub enum CacheAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Args, Debug)]
+pub struct HookCommand {
+    #[command(subcommand)]
+    pub action: HookAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HookAction {
+    /// Install git pre-commit hook for automatic snapshot generation
+    Install {
+        /// Force overwrite existing hook
+        #[arg(long, short = 'f')]
+        force: bool,
+    },
+
+    /// Uninstall the medulla git hook
+    Uninstall,
+
+    /// Check if hook is installed
+    Status,
 }

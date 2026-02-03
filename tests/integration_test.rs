@@ -789,3 +789,703 @@ fn test_search_across_entity_types() {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(parsed.as_array().unwrap().len(), 2);
 }
+
+// ============================================================================
+// Snapshot CLI Integration Tests (Phase 4)
+// ============================================================================
+
+#[test]
+fn test_snapshot_command_basic() {
+    let tmp = TempDir::new().unwrap();
+
+    // Init
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Add a decision so there's something to snapshot
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Test Decision", "--status=accepted"])
+        .output()
+        .unwrap();
+
+    // Run snapshot
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["snapshot"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Snapshot generated"));
+
+    // Verify files were created
+    let snapshot_dir = tmp.path().join(".medulla/snapshot");
+    assert!(snapshot_dir.exists());
+    assert!(snapshot_dir.join("README.md").exists());
+    assert!(snapshot_dir.join("decisions").exists());
+}
+
+#[test]
+fn test_snapshot_command_verbose() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Verbose Test", "--status=accepted"])
+        .output()
+        .unwrap();
+
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["snapshot", "--verbose"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Generated"));
+    assert!(stdout.contains("README.md"));
+    assert!(stdout.contains("decisions/"));
+}
+
+#[test]
+fn test_snapshot_with_all_entity_types() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Add one of each entity type
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Architecture Choice", "--status=accepted"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "task", "Implement feature", "--status=todo"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "note", "Meeting notes", "--type=meeting"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "prompt", "Code review prompt"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "component", "Auth service", "--status=active"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "link", "Documentation", "--url=https://docs.example.com"])
+        .output()
+        .unwrap();
+
+    // Generate snapshot
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["snapshot"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 decisions"));
+    assert!(stdout.contains("1 tasks"));
+    assert!(stdout.contains("1 notes"));
+    assert!(stdout.contains("1 prompts"));
+    assert!(stdout.contains("1 components"));
+    assert!(stdout.contains("1 links"));
+
+    // Verify subdirectories
+    let snapshot_dir = tmp.path().join(".medulla/snapshot");
+    assert!(snapshot_dir.join("decisions").exists());
+    assert!(snapshot_dir.join("tasks").exists());
+    assert!(snapshot_dir.join("notes").exists());
+    assert!(snapshot_dir.join("prompts").exists());
+    assert!(snapshot_dir.join("components").exists());
+    assert!(snapshot_dir.join("links").exists());
+}
+
+#[test]
+fn test_snapshot_readme_content() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Use PostgreSQL", "--status=accepted"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["snapshot"])
+        .output()
+        .unwrap();
+
+    let readme_path = tmp.path().join(".medulla/snapshot/README.md");
+    let readme_content = std::fs::read_to_string(&readme_path).unwrap();
+
+    // Verify README structure
+    assert!(readme_content.contains("# Project Knowledge Base"));
+    assert!(readme_content.contains("## Summary"));
+    assert!(readme_content.contains("| Decisions | 1 |"));
+    assert!(readme_content.contains("decisions/"));
+    assert!(readme_content.contains("Use PostgreSQL"));
+    assert!(readme_content.contains("*Generated:"));
+}
+
+#[test]
+fn test_snapshot_decision_file_content() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args([
+            "add",
+            "decision",
+            "Use Rust",
+            "--status=accepted",
+            "--tag=language",
+        ])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["snapshot"])
+        .output()
+        .unwrap();
+
+    // Find the decision file
+    let decisions_dir = tmp.path().join(".medulla/snapshot/decisions");
+    let entries: Vec<_> = std::fs::read_dir(&decisions_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+
+    assert_eq!(entries.len(), 1);
+    let file_path = entries[0].path();
+    let content = std::fs::read_to_string(&file_path).unwrap();
+
+    // Verify YAML frontmatter
+    assert!(content.starts_with("---\n"));
+    assert!(content.contains("title: Use Rust"));
+    assert!(content.contains("status: accepted"));
+    assert!(content.contains("sequence: 1"));
+    assert!(content.contains("tags:"));
+    assert!(content.contains("- language"));
+}
+
+#[test]
+fn test_snapshot_task_files() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Add active task
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "task", "Active Task", "--status=todo", "--priority=high"])
+        .output()
+        .unwrap();
+
+    // Add completed task
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "task", "Done Task", "--status=done"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["snapshot"])
+        .output()
+        .unwrap();
+
+    let tasks_dir = tmp.path().join(".medulla/snapshot/tasks");
+
+    // Verify active.md exists and has content
+    let active_path = tasks_dir.join("active.md");
+    assert!(active_path.exists());
+    let active_content = std::fs::read_to_string(&active_path).unwrap();
+    assert!(active_content.contains("Active Task"));
+    assert!(active_content.contains("[ ]")); // Checkbox format
+
+    // Verify completed.md exists and has content
+    let completed_path = tasks_dir.join("completed.md");
+    assert!(completed_path.exists());
+    let completed_content = std::fs::read_to_string(&completed_path).unwrap();
+    assert!(completed_content.contains("Done Task"));
+    assert!(completed_content.contains("[x]")); // Completed checkbox
+}
+
+#[test]
+fn test_snapshot_without_init_fails() {
+    let tmp = TempDir::new().unwrap();
+
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["snapshot"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Not in a medulla project") || stderr.contains("init"));
+}
+
+#[test]
+fn test_snapshot_empty_store() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["snapshot"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("0 decisions"));
+    assert!(stdout.contains("0 tasks"));
+
+    // README should still be generated
+    let readme_path = tmp.path().join(".medulla/snapshot/README.md");
+    assert!(readme_path.exists());
+    let readme = std::fs::read_to_string(&readme_path).unwrap();
+    assert!(readme.contains("No entities yet"));
+}
+
+// ============================================================================
+// Hook CLI Integration Tests (Phase 4)
+// ============================================================================
+
+#[test]
+fn test_hook_install_command() {
+    let tmp = TempDir::new().unwrap();
+
+    // Initialize git repo first
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+
+    // Initialize medulla
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Install hook
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Installed"));
+
+    // Verify hook file exists
+    let hook_path = tmp.path().join(".git/hooks/pre-commit");
+    assert!(hook_path.exists());
+}
+
+#[test]
+fn test_hook_status_not_installed() {
+    let tmp = TempDir::new().unwrap();
+
+    // Initialize git repo
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+
+    // Initialize medulla
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Check status without installing
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "status"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Not installed"));
+}
+
+#[test]
+fn test_hook_status_installed() {
+    let tmp = TempDir::new().unwrap();
+
+    // Initialize git repo
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+
+    // Initialize medulla
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Install hook
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+
+    // Check status
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "status"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Installed"));
+}
+
+#[test]
+fn test_hook_uninstall_command() {
+    let tmp = TempDir::new().unwrap();
+
+    // Initialize git repo
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+
+    // Initialize medulla
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Install hook first
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+
+    let hook_path = tmp.path().join(".git/hooks/pre-commit");
+    assert!(hook_path.exists());
+
+    // Uninstall hook
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "uninstall"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Uninstalled"));
+
+    // Verify hook is removed
+    assert!(!hook_path.exists());
+}
+
+#[test]
+fn test_hook_install_without_git_fails() {
+    let tmp = TempDir::new().unwrap();
+
+    // Initialize medulla WITHOUT git
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Try to install hook
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Not a git repository") || stderr.contains("git init"));
+}
+
+#[test]
+fn test_hook_install_force_overwrites() {
+    let tmp = TempDir::new().unwrap();
+
+    // Initialize git repo
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+
+    // Initialize medulla
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Create a custom hook
+    let hooks_dir = tmp.path().join(".git/hooks");
+    std::fs::create_dir_all(&hooks_dir).unwrap();
+    let hook_path = hooks_dir.join("pre-commit");
+    std::fs::write(&hook_path, "#!/bin/sh\necho 'Custom hook'\n").unwrap();
+
+    // Install without --force should fail
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "install"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+
+    // Install with --force should succeed
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["hook", "install", "--force"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Backed up") || stdout.contains("Installed"));
+
+    // Verify backup was created
+    let backup_path = hooks_dir.join("pre-commit.backup");
+    assert!(backup_path.exists());
+}
+
+// ============================================================================
+// Search Filter Integration Tests (Phase 3)
+// ============================================================================
+
+#[test]
+fn test_search_with_type_filter() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Add decision and task with similar titles
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Database design"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "task", "Database setup", "--status=todo"])
+        .output()
+        .unwrap();
+
+    // Search with type filter - should only find decision
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["search", "database type:decision", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed.as_array().unwrap().len(), 1);
+    assert_eq!(parsed[0]["entity_type"], "decision");
+}
+
+#[test]
+fn test_search_with_status_filter() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Proposed idea", "--status=proposed"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Accepted idea", "--status=accepted"])
+        .output()
+        .unwrap();
+
+    // Search with status filter
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["search", "idea status:accepted", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed.as_array().unwrap().len(), 1);
+    assert_eq!(parsed[0]["title"], "Accepted idea");
+}
+
+#[test]
+fn test_search_with_tag_filter() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Backend decision", "--tag=backend"])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "decision", "Frontend decision", "--tag=frontend"])
+        .output()
+        .unwrap();
+
+    // Search with tag filter
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["search", "decision tag:backend", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed.as_array().unwrap().len(), 1);
+    assert_eq!(parsed[0]["title"], "Backend decision");
+}
+
+#[test]
+fn test_search_combined_filters() {
+    let tmp = TempDir::new().unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .output()
+        .unwrap();
+
+    // Add various decisions
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args([
+            "add", "decision", "API Design",
+            "--status=accepted", "--tag=api"
+        ])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args([
+            "add", "decision", "API Security",
+            "--status=proposed", "--tag=api"
+        ])
+        .output()
+        .unwrap();
+
+    medulla_cmd()
+        .current_dir(tmp.path())
+        .args([
+            "add", "decision", "Database Schema",
+            "--status=accepted", "--tag=database"
+        ])
+        .output()
+        .unwrap();
+
+    // Search with combined filters: search text + status + tag
+    // Note: search text "API" is needed because filter-only queries don't work
+    let output = medulla_cmd()
+        .current_dir(tmp.path())
+        .args(["search", "API status:accepted tag:api", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed.as_array().unwrap().len(), 1);
+    assert_eq!(parsed[0]["title"], "API Design");
+}

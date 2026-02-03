@@ -1,10 +1,11 @@
 use clap::Parser;
 use medulla::cli::{
     handle_add_component, handle_add_decision, handle_add_link, handle_add_note, handle_add_prompt,
-    handle_add_task, handle_cache_rebuild, handle_cache_stats, handle_delete, handle_get, handle_init,
-    handle_list, handle_relation_add, handle_relation_delete, handle_relation_list, handle_search,
-    handle_serve, handle_tasks_blocked, handle_tasks_next, handle_tasks_ready, handle_update,
-    AddEntity, CacheAction, Cli, Commands, RelationAction, TasksAction,
+    handle_add_task, handle_cache_rebuild, handle_cache_stats, handle_delete, handle_get,
+    handle_hook_install, handle_hook_status, handle_hook_uninstall, handle_init, handle_list,
+    handle_relation_add, handle_relation_delete, handle_relation_list, handle_search, handle_serve,
+    handle_snapshot, handle_tasks_blocked, handle_tasks_next, handle_tasks_ready, handle_update,
+    AddEntity, CacheAction, Cli, Commands, HookAction, RelationAction, TasksAction,
 };
 
 fn main() {
@@ -108,6 +109,12 @@ fn main() {
         Commands::Cache(cache_cmd) => match cache_cmd.action {
             CacheAction::Stats { json } => handle_cache_stats(json),
             CacheAction::Rebuild { json } => handle_cache_rebuild(json),
+        },
+        Commands::Snapshot { output, verbose } => handle_snapshot(output, verbose),
+        Commands::Hook(hook_cmd) => match hook_cmd.action {
+            HookAction::Install { force } => handle_hook_install(force),
+            HookAction::Uninstall => handle_hook_uninstall(),
+            HookAction::Status => handle_hook_status(),
         },
     };
 
