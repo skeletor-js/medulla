@@ -2,7 +2,7 @@
 
 **Date**: 2025-01-31
 **Updated**: 2026-02-03
-**Status**: In Progress (Batch 7 Complete)
+**Status**: In Progress (Batch 8 Complete)
 
 ## Overview
 
@@ -848,11 +848,19 @@ All Phase 1 entity types are now implemented:
 - `medulla tasks blocked <id>` shows blockers for a specific task, or all blocked tasks if no ID given
 - All 72 tests pass (61 unit + 11 integration)
 
-#### Batch 8: Testing
+#### Batch 8: Testing ✓ COMPLETE (2026-02-03)
 
-- [ ] Write unit tests for all tools and error paths
-- [ ] Write integration tests for MCP protocol
-- [ ] Test with Claude Code / MCP Inspector
+- [x] Write unit tests for all tools and error paths
+- [x] Write integration tests for MCP protocol
+- [x] Add CLI integration tests for task queue commands
+
+**Key implementation notes:**
+
+- Added 17 unit tests for MCP tools covering entity CRUD, search, graph, and task queue operations
+- Added 10 CLI integration tests for task queue commands (tasks ready/next/blocked)
+- Fixed critical bug in `sync_cache` - now syncs all entity types (tasks, notes, prompts, components, links) not just decisions
+- Total test coverage: 99 tests (78 unit + 21 integration)
+- Manual testing with Claude Code / MCP Inspector should be done as part of Phase 2 validation
 
 ## Validation Checklist
 

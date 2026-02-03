@@ -2309,4 +2309,606 @@ mod tests {
             assert!(subs.get_subscribers("medulla://entities/task").is_empty());
         }
     }
+
+    // ========================================================================
+    // MCP Tool Unit Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_entity_create_decision() {
+        let (server, _tmp) = setup_test_server();
+
+        let params = EntityCreateParams {
+            entity_type: "decision".to_string(),
+            title: "Use Rust for CLI".to_string(),
+            content: Some("We decided to use Rust for the CLI implementation.".to_string()),
+            tags: Some(vec!["lang".to_string(), "tooling".to_string()]),
+            properties: Some(serde_json::json!({
+                "status": "accepted",
+                "context": "Need a fast, reliable CLI"
+            })),
+        };
+
+        let result = server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        assert!(!tool_result.is_error.unwrap_or(false));
+
+        // Verify the entity was created
+        let store = server.store.lock().await;
+        let decisions = store.list_decisions().unwrap();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].base.title, "Use Rust for CLI");
+        assert_eq!(decisions[0].status, crate::entity::DecisionStatus::Accepted);
+    }
+
+    #[tokio::test]
+    async fn test_entity_create_task() {
+        let (server, _tmp) = setup_test_server();
+
+        let params = EntityCreateParams {
+            entity_type: "task".to_string(),
+            title: "Implement auth".to_string(),
+            content: None,
+            tags: Some(vec!["backend".to_string()]),
+            properties: Some(serde_json::json!({
+                "status": "todo",
+                "priority": "high",
+                "due_date": "2025-03-01",
+                "assignee": "alice"
+            })),
+        };
+
+        let result = server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+            .await;
+
+        assert!(result.is_ok());
+
+        let store = server.store.lock().await;
+        let tasks = store.list_tasks().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].base.title, "Implement auth");
+        assert_eq!(tasks[0].priority, crate::entity::TaskPriority::High);
+        assert_eq!(tasks[0].assignee, Some("alice".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_entity_create_validation_error_empty_title() {
+        let (server, _tmp) = setup_test_server();
+
+        let params = EntityCreateParams {
+            entity_type: "decision".to_string(),
+            title: "   ".to_string(), // whitespace only
+            content: None,
+            tags: None,
+            properties: None,
+        };
+
+        let result = server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Title"));
+    }
+
+    #[tokio::test]
+    async fn test_entity_create_validation_error_invalid_type() {
+        let (server, _tmp) = setup_test_server();
+
+        let params = EntityCreateParams {
+            entity_type: "invalid_type".to_string(),
+            title: "Test".to_string(),
+            content: None,
+            tags: None,
+            properties: None,
+        };
+
+        let result = server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_entity_get_by_sequence_number() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create an entity first
+        let create_params = EntityCreateParams {
+            entity_type: "decision".to_string(),
+            title: "Test Decision".to_string(),
+            content: None,
+            tags: None,
+            properties: None,
+        };
+        server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(create_params))
+            .await
+            .unwrap();
+
+        // Get by sequence number
+        let get_params = EntityGetParams {
+            id: "1".to_string(),
+            entity_type: None,
+        };
+
+        let result = server
+            .entity_get(rmcp::handler::server::wrapper::Parameters(get_params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            assert!(t.text.contains("Test Decision"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_entity_get_not_found() {
+        let (server, _tmp) = setup_test_server();
+
+        let get_params = EntityGetParams {
+            id: "999".to_string(),
+            entity_type: None,
+        };
+
+        let result = server
+            .entity_get(rmcp::handler::server::wrapper::Parameters(get_params))
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("not found") || err.code.0 == -32001);
+    }
+
+    #[tokio::test]
+    async fn test_entity_list_all() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create multiple entities
+        for title in ["Decision A", "Decision B"] {
+            let params = EntityCreateParams {
+                entity_type: "decision".to_string(),
+                title: title.to_string(),
+                content: None,
+                tags: None,
+                properties: None,
+            };
+            server
+                .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+                .await
+                .unwrap();
+        }
+
+        let list_params = EntityListParams {
+            entity_type: Some("decision".to_string()),
+            status: None,
+            tag: None,
+            limit: None,
+            offset: None,
+        };
+
+        let result = server
+            .entity_list(rmcp::handler::server::wrapper::Parameters(list_params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(parsed["total"], 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_entity_list_with_status_filter() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create decisions with different statuses
+        for (title, status) in [("Accepted", "accepted"), ("Proposed", "proposed")] {
+            let params = EntityCreateParams {
+                entity_type: "decision".to_string(),
+                title: title.to_string(),
+                content: None,
+                tags: None,
+                properties: Some(serde_json::json!({ "status": status })),
+            };
+            server
+                .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+                .await
+                .unwrap();
+        }
+
+        let list_params = EntityListParams {
+            entity_type: Some("decision".to_string()),
+            status: Some("accepted".to_string()),
+            tag: None,
+            limit: None,
+            offset: None,
+        };
+
+        let result = server
+            .entity_list(rmcp::handler::server::wrapper::Parameters(list_params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(parsed["total"], 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_entity_update() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create an entity
+        let create_params = EntityCreateParams {
+            entity_type: "decision".to_string(),
+            title: "Original Title".to_string(),
+            content: None,
+            tags: Some(vec!["old-tag".to_string()]),
+            properties: Some(serde_json::json!({ "status": "proposed" })),
+        };
+        server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(create_params))
+            .await
+            .unwrap();
+
+        // Update it
+        let update_params = EntityUpdateParams {
+            id: "1".to_string(),
+            title: Some("Updated Title".to_string()),
+            content: Some("New content".to_string()),
+            add_tags: Some(vec!["new-tag".to_string()]),
+            remove_tags: Some(vec!["old-tag".to_string()]),
+            properties: Some(serde_json::json!({ "status": "accepted" })),
+        };
+
+        let result = server
+            .entity_update(rmcp::handler::server::wrapper::Parameters(update_params))
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify
+        let store = server.store.lock().await;
+        let decisions = store.list_decisions().unwrap();
+        assert_eq!(decisions[0].base.title, "Updated Title");
+        assert_eq!(decisions[0].status, crate::entity::DecisionStatus::Accepted);
+        assert!(decisions[0].base.tags.contains(&"new-tag".to_string()));
+        assert!(!decisions[0].base.tags.contains(&"old-tag".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_entity_delete() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create an entity
+        let create_params = EntityCreateParams {
+            entity_type: "decision".to_string(),
+            title: "To Be Deleted".to_string(),
+            content: None,
+            tags: None,
+            properties: None,
+        };
+        server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(create_params))
+            .await
+            .unwrap();
+
+        // Delete it
+        let delete_params = EntityDeleteParams {
+            id: "1".to_string(),
+        };
+
+        let result = server
+            .entity_delete(rmcp::handler::server::wrapper::Parameters(delete_params))
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify it's gone
+        let store = server.store.lock().await;
+        let decisions = store.list_decisions().unwrap();
+        assert!(decisions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_fulltext() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create entities with searchable content
+        for (title, content) in [
+            ("PostgreSQL Decision", "Use PostgreSQL for database storage"),
+            ("Redis Decision", "Use Redis for caching"),
+        ] {
+            let params = EntityCreateParams {
+                entity_type: "decision".to_string(),
+                title: title.to_string(),
+                content: Some(content.to_string()),
+                tags: None,
+                properties: None,
+            };
+            server
+                .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+                .await
+                .unwrap();
+        }
+
+        // Search for PostgreSQL
+        let search_params = SearchFulltextParams {
+            query: "PostgreSQL".to_string(),
+            entity_type: None,
+            limit: None,
+        };
+
+        let result = server
+            .search_fulltext(rmcp::handler::server::wrapper::Parameters(search_params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(parsed["total"], 1);
+            assert!(parsed["results"][0]["title"]
+                .as_str()
+                .unwrap()
+                .contains("PostgreSQL"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_ready() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create tasks
+        for (title, priority) in [("Task High", "high"), ("Task Low", "low")] {
+            let params = EntityCreateParams {
+                entity_type: "task".to_string(),
+                title: title.to_string(),
+                content: None,
+                tags: None,
+                properties: Some(serde_json::json!({
+                    "status": "todo",
+                    "priority": priority
+                })),
+            };
+            server
+                .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+                .await
+                .unwrap();
+        }
+
+        let ready_params = TaskReadyParams { limit: None };
+
+        let result = server
+            .task_ready(rmcp::handler::server::wrapper::Parameters(ready_params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(parsed["total"], 2);
+            // High priority should come first
+            assert!(parsed["tasks"][0]["title"].as_str().unwrap().contains("High"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_next() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create tasks with different priorities
+        for (title, priority) in [("Normal Task", "normal"), ("Urgent Task", "urgent")] {
+            let params = EntityCreateParams {
+                entity_type: "task".to_string(),
+                title: title.to_string(),
+                content: None,
+                tags: None,
+                properties: Some(serde_json::json!({
+                    "status": "todo",
+                    "priority": priority
+                })),
+            };
+            server
+                .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+                .await
+                .unwrap();
+        }
+
+        let result = server.task_next().await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            // Urgent should be first
+            assert!(parsed["title"].as_str().unwrap().contains("Urgent"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_complete() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create a task
+        let params = EntityCreateParams {
+            entity_type: "task".to_string(),
+            title: "Task to Complete".to_string(),
+            content: None,
+            tags: None,
+            properties: Some(serde_json::json!({ "status": "todo" })),
+        };
+        server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+            .unwrap();
+
+        // Complete it
+        let complete_params = TaskCompleteParams {
+            id: "1".to_string(),
+        };
+
+        let result = server
+            .task_complete(rmcp::handler::server::wrapper::Parameters(complete_params))
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify it's done
+        let store = server.store.lock().await;
+        let tasks = store.list_tasks().unwrap();
+        assert_eq!(tasks[0].status, crate::entity::TaskStatus::Done);
+    }
+
+    #[tokio::test]
+    async fn test_graph_relations() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create two decisions
+        for title in ["Decision A", "Decision B"] {
+            let params = EntityCreateParams {
+                entity_type: "decision".to_string(),
+                title: title.to_string(),
+                content: None,
+                tags: None,
+                properties: None,
+            };
+            server
+                .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+                .await
+                .unwrap();
+        }
+
+        // Add a relation
+        {
+            let store = server.store.lock().await;
+            let decisions = store.list_decisions().unwrap();
+            let relation = crate::entity::Relation::new(
+                decisions[0].base.id,
+                "decision".to_string(),
+                decisions[1].base.id,
+                "decision".to_string(),
+                crate::entity::RelationType::Supersedes,
+            );
+            store.add_relation(&relation).unwrap();
+            store.save().unwrap();
+        }
+
+        // Query relations
+        let params = GraphRelationsParams {
+            id: "1".to_string(),
+            direction: Some("both".to_string()),
+        };
+
+        let result = server
+            .graph_relations(rmcp::handler::server::wrapper::Parameters(params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert!(!parsed["outgoing"].as_array().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_graph_orphans() {
+        let (server, _tmp) = setup_test_server();
+
+        // Create an orphan entity (no relations)
+        let params = EntityCreateParams {
+            entity_type: "decision".to_string(),
+            title: "Orphan Decision".to_string(),
+            content: None,
+            tags: None,
+            properties: None,
+        };
+        server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+            .unwrap();
+
+        let orphan_params = GraphOrphansParams {
+            entity_type: None,
+            limit: None,
+        };
+
+        let result = server
+            .graph_orphans(rmcp::handler::server::wrapper::Parameters(orphan_params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(parsed["total"], 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_entity_batch_mixed_operations() {
+        let (server, _tmp) = setup_test_server();
+
+        // First, create an entity to update/delete later
+        let create_params = EntityCreateParams {
+            entity_type: "decision".to_string(),
+            title: "Existing Decision".to_string(),
+            content: None,
+            tags: None,
+            properties: None,
+        };
+        server
+            .entity_create(rmcp::handler::server::wrapper::Parameters(create_params))
+            .await
+            .unwrap();
+
+        // Batch with create, update, delete (and one invalid delete)
+        let batch_params = EntityBatchParams {
+            operations: vec![
+                BatchOperation::Create(EntityCreateParams {
+                    entity_type: "decision".to_string(),
+                    title: "New via Batch".to_string(),
+                    content: None,
+                    tags: None,
+                    properties: None,
+                }),
+                BatchOperation::Update(EntityUpdateParams {
+                    id: "1".to_string(),
+                    title: Some("Updated via Batch".to_string()),
+                    content: None,
+                    add_tags: None,
+                    remove_tags: None,
+                    properties: None,
+                }),
+                BatchOperation::Delete(EntityDeleteParams {
+                    id: "999".to_string(), // doesn't exist
+                }),
+            ],
+        };
+
+        let result = server
+            .entity_batch(rmcp::handler::server::wrapper::Parameters(batch_params))
+            .await;
+
+        assert!(result.is_ok());
+        let tool_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(t) = &tool_result.content[0].raw {
+            let parsed: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(parsed["succeeded"], 2); // create and update succeed
+            assert_eq!(parsed["failed"], 1);    // delete fails
+        }
+    }
 }

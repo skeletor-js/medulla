@@ -148,10 +148,24 @@ impl LoroStore {
     /// Sync the cache with the current store state
     pub fn sync_cache(&self, cache: &SqliteCache) -> Result<bool> {
         let decisions = self.list_decisions()?;
+        let tasks = self.list_tasks()?;
+        let notes = self.list_notes()?;
+        let prompts = self.list_prompts()?;
+        let components = self.list_components()?;
+        let links = self.list_links()?;
         let relations = self.list_relations()?;
         let version = self.version_hash();
 
-        cache.sync_from_loro(&decisions, &relations, &version)
+        cache.sync_from_loro_full(
+            &decisions,
+            &tasks,
+            &notes,
+            &prompts,
+            &components,
+            &links,
+            &relations,
+            &version,
+        )
     }
 
     /// Get the next sequence number for a given entity type
