@@ -16,10 +16,10 @@ use crate::storage::{
 };
 use error::{validation, McpError, VALID_ENTITY_TYPES};
 use rmcp::{
-    handler::server::{tool::ToolRouter, wrapper::Parameters},
+    handler::server::wrapper::Parameters,
     model::*,
     service::{RequestContext, RoleServer},
-    tool, tool_router, ErrorData as McpErrorData, ServerHandler,
+    tool, tool_handler, tool_router, ErrorData as McpErrorData, ServerHandler,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -89,8 +89,8 @@ pub struct MedullaServer {
     pub cache: Arc<Mutex<SqliteCache>>,
     /// Active resource subscriptions.
     pub subscriptions: Arc<Mutex<SubscriptionState>>,
-    /// Tool router for handling tool calls.
-    tool_router: ToolRouter<Self>,
+    /// Tool router for MCP tool handling.
+    pub tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
 /// Server information for MCP initialization.
@@ -153,7 +153,7 @@ impl MedullaServer {
 
         let response = match params.entity_type.as_str() {
             "decision" => {
-                let seq = store.next_sequence_number("decisions");
+                let seq = store.next_sequence_number();
                 let mut decision = Decision::new(params.title.trim().to_string(), seq);
                 decision.base.content = params.content;
                 decision.base.tags = params.tags.unwrap_or_default();
@@ -201,7 +201,7 @@ impl MedullaServer {
                 decision_to_response(&decision)
             }
             "task" => {
-                let seq = store.next_sequence_number("tasks");
+                let seq = store.next_sequence_number();
                 let mut task = Task::new(params.title.trim().to_string(), seq);
                 task.base.content = params.content;
                 task.base.tags = params.tags.unwrap_or_default();
@@ -228,7 +228,7 @@ impl MedullaServer {
                 task_to_response(&task)
             }
             "note" => {
-                let seq = store.next_sequence_number("notes");
+                let seq = store.next_sequence_number();
                 let mut note = Note::new(params.title.trim().to_string(), seq);
                 note.base.content = params.content;
                 note.base.tags = params.tags.unwrap_or_default();
@@ -246,7 +246,7 @@ impl MedullaServer {
                 note_to_response(&note)
             }
             "prompt" => {
-                let seq = store.next_sequence_number("prompts");
+                let seq = store.next_sequence_number();
                 let mut prompt = Prompt::new(params.title.trim().to_string(), seq);
                 prompt.base.content = params.content;
                 prompt.base.tags = params.tags.unwrap_or_default();
@@ -295,7 +295,7 @@ impl MedullaServer {
                 prompt_to_response(&prompt)
             }
             "component" => {
-                let seq = store.next_sequence_number("components");
+                let seq = store.next_sequence_number();
                 let mut component = Component::new(params.title.trim().to_string(), seq);
                 component.base.content = params.content;
                 component.base.tags = params.tags.unwrap_or_default();
@@ -338,7 +338,7 @@ impl MedullaServer {
 
                 validate_url(url)?;
 
-                let seq = store.next_sequence_number("links");
+                let seq = store.next_sequence_number();
                 let mut link = Link::new(params.title.trim().to_string(), url.to_string(), seq);
                 link.base.content = params.content;
                 link.base.tags = params.tags.unwrap_or_default();
@@ -1548,6 +1548,139 @@ impl MedullaServer {
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
+
+    // ========================================================================
+    // relation_create
+    // ========================================================================
+
+    /// Create a relation between two entities.
+    #[tool(
+        description = "Create a relation between two entities. Valid relation types: implements, blocks, supersedes, references, belongs_to, documents"
+    )]
+    pub async fn relation_create(
+        &self,
+        Parameters(params): Parameters<RelationCreateParams>,
+    ) -> Result<CallToolResult, McpErrorData> {
+        let store = self.store.lock().await;
+        let cache = self.cache.lock().await;
+
+        // Resolve source and target IDs to UUIDs with types
+        let (source_uuid, source_type) =
+            self.resolve_entity_id_with_type(&store, &params.source_id)?;
+        let (target_uuid, target_type) =
+            self.resolve_entity_id_with_type(&store, &params.target_id)?;
+
+        // Parse and validate relation type
+        let relation_type: crate::entity::RelationType = params
+            .relation_type
+            .parse()
+            .map_err(|e: String| McpError::ValidationFailed {
+                field: "relation_type".to_string(),
+                message: e,
+            })?;
+
+        // Create the relation
+        let relation = crate::entity::Relation::new(
+            source_uuid,
+            source_type.clone(),
+            target_uuid,
+            target_type.clone(),
+            relation_type.clone(),
+        );
+
+        // Store and index the relation
+        store.add_relation(&relation).map_err(McpError::from)?;
+        store.save().map_err(McpError::from)?;
+        cache.index_relation(&relation).map_err(McpError::from)?;
+
+        let response = serde_json::json!({
+            "source_id": source_uuid.to_string(),
+            "source_type": source_type,
+            "target_id": target_uuid.to_string(),
+            "target_type": target_type,
+            "relation_type": relation_type.to_string(),
+            "created_at": relation.created_at.to_rfc3339(),
+            "message": format!(
+                "Created '{}' relation from {} to {}",
+                relation_type, params.source_id, params.target_id
+            ),
+        });
+
+        let json =
+            serde_json::to_string_pretty(&response).map_err(|e| McpError::InternalError {
+                message: format!("Failed to serialize response: {}", e),
+            })?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ========================================================================
+    // relation_delete
+    // ========================================================================
+
+    /// Delete a relation between two entities.
+    #[tool(
+        description = "Delete a relation between two entities. Specify source, target, and relation type."
+    )]
+    pub async fn relation_delete(
+        &self,
+        Parameters(params): Parameters<RelationDeleteParams>,
+    ) -> Result<CallToolResult, McpErrorData> {
+        let store = self.store.lock().await;
+        let cache = self.cache.lock().await;
+
+        // Resolve source and target IDs to UUIDs
+        let (source_uuid, _) = self.resolve_entity_id_with_type(&store, &params.source_id)?;
+        let (target_uuid, _) = self.resolve_entity_id_with_type(&store, &params.target_id)?;
+
+        // Parse and validate relation type
+        let relation_type: crate::entity::RelationType = params
+            .relation_type
+            .parse()
+            .map_err(|e: String| McpError::ValidationFailed {
+                field: "relation_type".to_string(),
+                message: e,
+            })?;
+
+        // Build the composite key for cache deletion
+        let composite_key = format!(
+            "{}:{}:{}",
+            source_uuid,
+            relation_type,
+            target_uuid
+        );
+
+        // Delete from store (takes individual parameters)
+        store
+            .delete_relation(
+                &source_uuid.to_string(),
+                &relation_type.to_string(),
+                &target_uuid.to_string(),
+            )
+            .map_err(McpError::from)?;
+        store.save().map_err(McpError::from)?;
+
+        // Delete from cache (takes composite key)
+        cache.remove_relation(&composite_key).map_err(McpError::from)?;
+
+        let response = serde_json::json!({
+            "deleted": true,
+            "source_id": source_uuid.to_string(),
+            "target_id": target_uuid.to_string(),
+            "relation_type": relation_type.to_string(),
+            "message": format!(
+                "Deleted '{}' relation from {} to {}",
+                relation_type, params.source_id, params.target_id
+            ),
+        });
+
+        let json =
+            serde_json::to_string_pretty(&response).map_err(|e| McpError::InternalError {
+                message: format!("Failed to serialize response: {}", e),
+            })?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
 }
 
 // Helper methods that don't need #[tool] attribute - separate impl block
@@ -2067,8 +2200,26 @@ impl MedullaServer {
         }
         Ok(None)
     }
+
+    /// Resolve an entity ID to UUID and entity type.
+    fn resolve_entity_id_with_type(
+        &self,
+        store: &LoroStore,
+        id: &str,
+    ) -> Result<(uuid::Uuid, String), McpError> {
+        let is_sequence = id.chars().all(|c| c.is_ascii_digit());
+
+        for entity_type in VALID_ENTITY_TYPES {
+            if let Some(uuid) = self.find_uuid_by_id(store, entity_type, id, is_sequence)? {
+                return Ok((uuid, entity_type.to_string()));
+            }
+        }
+
+        Err(McpError::EntityNotFound { id: id.to_string() })
+    }
 }
 
+#[tool_handler]
 impl ServerHandler for MedullaServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
@@ -2232,24 +2383,27 @@ mod tests {
     #[test]
     fn test_build_static_resources() {
         let resources = resources::build_static_resources();
-        assert_eq!(resources.len(), 2);
+        assert_eq!(resources.len(), 9);
         assert!(resources.iter().any(|r| r.uri == "medulla://schema"));
         assert!(resources.iter().any(|r| r.uri == "medulla://stats"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://entities"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://tasks/ready"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://graph"));
     }
 
     #[test]
     fn test_build_resource_templates() {
         let templates = resources::build_resource_templates();
-        assert!(!templates.is_empty());
+        assert_eq!(templates.len(), 5);
         assert!(templates
             .iter()
-            .any(|t| t.uri_template == "medulla://entities"));
+            .any(|t| t.uri_template == "medulla://entities/{type}"));
         assert!(templates
             .iter()
-            .any(|t| t.uri_template == "medulla://tasks/ready"));
+            .any(|t| t.uri_template == "medulla://entity/{id}"));
         assert!(templates
             .iter()
-            .any(|t| t.uri_template == "medulla://graph"));
+            .any(|t| t.uri_template == "medulla://tasks/due/{date}"));
     }
 
     #[tokio::test]

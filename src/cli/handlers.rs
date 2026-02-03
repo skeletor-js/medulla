@@ -140,7 +140,7 @@ pub fn handle_add_decision(
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
 
-    let seq = store.next_sequence_number("decisions");
+    let seq = store.next_sequence_number();
     let mut decision = Decision::new(title, seq);
 
     // Parse and set status
@@ -221,7 +221,7 @@ pub fn handle_add_task(
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
 
-    let seq = store.next_sequence_number("tasks");
+    let seq = store.next_sequence_number();
     let mut task = Task::new(title, seq);
 
     task.status = status.parse().unwrap_or_default();
@@ -270,7 +270,7 @@ pub fn handle_add_note(
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
 
-    let seq = store.next_sequence_number("notes");
+    let seq = store.next_sequence_number();
     let mut note = Note::new(title, seq);
 
     note.note_type = note_type;
@@ -317,7 +317,7 @@ pub fn handle_add_prompt(
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
 
-    let seq = store.next_sequence_number("prompts");
+    let seq = store.next_sequence_number();
     let mut prompt = Prompt::new(title, seq);
 
     prompt.variables = variables;
@@ -368,7 +368,7 @@ pub fn handle_add_component(
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
 
-    let seq = store.next_sequence_number("components");
+    let seq = store.next_sequence_number();
     let mut component = Component::new(title, seq);
 
     component.component_type = component_type;
@@ -422,7 +422,7 @@ pub fn handle_add_link(
     let root = find_project_root();
     let store = LoroStore::open(&root)?;
 
-    let seq = store.next_sequence_number("links");
+    let seq = store.next_sequence_number();
     let mut link = Link::new(title, url, seq);
 
     link.link_type = link_type;
@@ -1236,6 +1236,273 @@ fn resolve_task_id(store: &LoroStore, id: &str) -> Result<String> {
     }
 
     Err(MedullaError::EntityNotFound(id.to_string()))
+}
+
+/// Find an entity by ID and return its UUID and type
+fn find_entity_id_with_type(store: &LoroStore, id: &str) -> Result<(uuid::Uuid, String)> {
+    let entity = find_entity_by_id(store, id)?;
+    match entity {
+        EntityRef::Decision(d) => Ok((d.base.id, "decision".to_string())),
+        EntityRef::Task(t) => Ok((t.base.id, "task".to_string())),
+        EntityRef::Note(n) => Ok((n.base.id, "note".to_string())),
+        EntityRef::Prompt(p) => Ok((p.base.id, "prompt".to_string())),
+        EntityRef::Component(c) => Ok((c.base.id, "component".to_string())),
+        EntityRef::Link(l) => Ok((l.base.id, "link".to_string())),
+    }
+}
+
+/// Get entity title by ID for display purposes
+fn get_entity_title(store: &LoroStore, id: &uuid::Uuid) -> String {
+    // Search through all entity types
+    if let Ok(decisions) = store.list_decisions() {
+        for d in decisions {
+            if d.base.id == *id {
+                return d.base.title;
+            }
+        }
+    }
+    if let Ok(tasks) = store.list_tasks() {
+        for t in tasks {
+            if t.base.id == *id {
+                return t.base.title;
+            }
+        }
+    }
+    if let Ok(notes) = store.list_notes() {
+        for n in notes {
+            if n.base.id == *id {
+                return n.base.title;
+            }
+        }
+    }
+    if let Ok(prompts) = store.list_prompts() {
+        for p in prompts {
+            if p.base.id == *id {
+                return p.base.title;
+            }
+        }
+    }
+    if let Ok(components) = store.list_components() {
+        for c in components {
+            if c.base.id == *id {
+                return c.base.title;
+            }
+        }
+    }
+    if let Ok(links) = store.list_links() {
+        for l in links {
+            if l.base.id == *id {
+                return l.base.title;
+            }
+        }
+    }
+    id.to_string()[..7].to_string()
+}
+
+pub fn handle_relation_add(
+    source_id: String,
+    target_id: String,
+    relation_type: String,
+    json: bool,
+) -> Result<()> {
+    let root = find_project_root();
+    let store = LoroStore::open(&root)?;
+
+    // Resolve source and target IDs to UUIDs with types
+    let (source_uuid, source_type) = find_entity_id_with_type(&store, &source_id)?;
+    let (target_uuid, target_type) = find_entity_id_with_type(&store, &target_id)?;
+
+    // Parse and validate relation type
+    let rel_type: RelationType = relation_type
+        .parse()
+        .map_err(|e: String| MedullaError::Storage(e))?;
+
+    // Create the relation
+    let mut relation = Relation::new(
+        source_uuid,
+        source_type.clone(),
+        target_uuid,
+        target_type.clone(),
+        rel_type.clone(),
+    );
+
+    // Try to get git author
+    let git_author = get_git_author();
+    relation.created_by = git_author;
+
+    // Store the relation
+    store.add_relation(&relation)?;
+    store.save()?;
+
+    if json {
+        let response = serde_json::json!({
+            "source_id": source_uuid.to_string(),
+            "source_type": source_type,
+            "target_id": target_uuid.to_string(),
+            "target_type": target_type,
+            "relation_type": rel_type.to_string(),
+            "created_at": relation.created_at.to_rfc3339(),
+            "message": format!(
+                "Created '{}' relation from {} to {}",
+                rel_type, source_id, target_id
+            ),
+        });
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        println!(
+            "Created '{}' relation: {} ({}) -> {} ({})",
+            rel_type,
+            source_id,
+            source_type,
+            target_id,
+            target_type
+        );
+    }
+
+    Ok(())
+}
+
+pub fn handle_relation_delete(
+    source_id: String,
+    target_id: String,
+    relation_type: String,
+    json: bool,
+) -> Result<()> {
+    let root = find_project_root();
+    let store = LoroStore::open(&root)?;
+
+    // Resolve source and target IDs to UUIDs
+    let (source_uuid, _) = find_entity_id_with_type(&store, &source_id)?;
+    let (target_uuid, _) = find_entity_id_with_type(&store, &target_id)?;
+
+    // Parse and validate relation type
+    let rel_type: RelationType = relation_type
+        .parse()
+        .map_err(|e: String| MedullaError::Storage(e))?;
+
+    // Delete from store
+    store.delete_relation(
+        &source_uuid.to_string(),
+        &rel_type.to_string(),
+        &target_uuid.to_string(),
+    )?;
+    store.save()?;
+
+    if json {
+        let response = serde_json::json!({
+            "deleted": true,
+            "source_id": source_uuid.to_string(),
+            "target_id": target_uuid.to_string(),
+            "relation_type": rel_type.to_string(),
+            "message": format!(
+                "Deleted '{}' relation from {} to {}",
+                rel_type, source_id, target_id
+            ),
+        });
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        println!(
+            "Deleted '{}' relation: {} -> {}",
+            rel_type, source_id, target_id
+        );
+    }
+
+    Ok(())
+}
+
+pub fn handle_relation_list(entity_id: String, json: bool) -> Result<()> {
+    let root = find_project_root();
+    let store = LoroStore::open(&root)?;
+
+    // Resolve entity ID to UUID
+    let (entity_uuid, entity_type) = find_entity_id_with_type(&store, &entity_id)?;
+
+    // Get all relations involving this entity (both as source and target)
+    let relations_from = store.get_relations_from(&entity_uuid.to_string())?;
+    let relations_to = store.get_relations_to(&entity_uuid.to_string())?;
+
+    if json {
+        #[derive(serde::Serialize)]
+        struct RelationJson {
+            direction: String,
+            relation_type: String,
+            other_id: String,
+            other_type: String,
+            other_title: String,
+            created_at: String,
+        }
+
+        let mut all_relations: Vec<RelationJson> = Vec::new();
+
+        for r in &relations_from {
+            all_relations.push(RelationJson {
+                direction: "outgoing".to_string(),
+                relation_type: r.relation_type.to_string(),
+                other_id: r.target_id.to_string(),
+                other_type: r.target_type.clone(),
+                other_title: get_entity_title(&store, &r.target_id),
+                created_at: r.created_at.to_rfc3339(),
+            });
+        }
+
+        for r in &relations_to {
+            all_relations.push(RelationJson {
+                direction: "incoming".to_string(),
+                relation_type: r.relation_type.to_string(),
+                other_id: r.source_id.to_string(),
+                other_type: r.source_type.clone(),
+                other_title: get_entity_title(&store, &r.source_id),
+                created_at: r.created_at.to_rfc3339(),
+            });
+        }
+
+        let response = serde_json::json!({
+            "entity_id": entity_uuid.to_string(),
+            "entity_type": entity_type,
+            "relations": all_relations,
+        });
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        let entity_title = get_entity_title(&store, &entity_uuid);
+        println!(
+            "Relations for {} ({}) - {}:\n",
+            entity_id, entity_type, entity_title
+        );
+
+        if relations_from.is_empty() && relations_to.is_empty() {
+            println!("  No relations found.");
+        } else {
+            if !relations_from.is_empty() {
+                println!("  Outgoing relations:");
+                for r in &relations_from {
+                    let target_title = get_entity_title(&store, &r.target_id);
+                    println!(
+                        "    --[{}]--> {} ({}) - {}",
+                        r.relation_type,
+                        &r.target_id.to_string()[..7],
+                        r.target_type,
+                        target_title
+                    );
+                }
+            }
+
+            if !relations_to.is_empty() {
+                println!("  Incoming relations:");
+                for r in &relations_to {
+                    let source_title = get_entity_title(&store, &r.source_id);
+                    println!(
+                        "    <--[{}]-- {} ({}) - {}",
+                        r.relation_type,
+                        &r.source_id.to_string()[..7],
+                        r.source_type,
+                        source_title
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub fn handle_search(query: String, json: bool) -> Result<()> {

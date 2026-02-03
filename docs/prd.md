@@ -2,8 +2,9 @@
 
 > A git-native, AI-accessible knowledge engine for software projects.
 
-**Status**: PRD Complete — Ready for Development
+**Status**: Phase 2 Complete — MCP Server Implemented
 **Date**: 2025-01-30
+**Updated**: 2026-02-03
 **Authors**: Jordan Stella, Claude
 **Website**: [medulla.cc](https://medulla.cc)
 
@@ -927,15 +928,20 @@ medulla add decision "Use Postgres" --edit  # Opens $EDITOR with template
 
 **Phase 1 Complete:** Full implementation with 21 unit tests + 11 integration tests passing (32 total).
 
-### Phase 2: MCP Server
+### Phase 2: MCP Server ✓ COMPLETE
 
-- [ ] MCP 2025-11-25 protocol compliance
-- [ ] stdio transport (default for Claude Desktop, Cursor)
-- [ ] Entity tools: `entity_create`, `entity_update`, `entity_delete`, `entity_get`, `entity_list`
-- [ ] Batch operations: `entity_batch` with best-effort semantics, per-operation results
-- [ ] Resources with by-type subscriptions (`medulla://decisions`, `medulla://tasks`)
-- [ ] Graph tools: `graph_relations`, `graph_path`, `graph_orphans`
-- [ ] Convenience tools: `task_complete`, `task_reschedule`, `decision_supersede`
+- [x] MCP 2025-11-25 protocol compliance
+- [x] stdio transport (default for Claude Desktop, Cursor)
+- [x] Entity tools: `entity_create`, `entity_update`, `entity_delete`, `entity_get`, `entity_list`
+- [x] Batch operations: `entity_batch` with best-effort semantics, per-operation results
+- [x] Resources with by-type subscriptions (`medulla://decisions`, `medulla://tasks`)
+- [x] Graph tools: `graph_relations`, `graph_path`, `graph_orphans`
+- [x] Convenience tools: `task_complete`, `task_reschedule`, `decision_supersede`
+- [x] Task queue tools (Beads parity): `task_ready`, `task_blocked`, `task_next`
+- [x] CLI commands: `medulla serve`, `medulla tasks ready/next/blocked`
+- [x] 99 tests (78 unit + 21 integration)
+
+**Phase 2 Complete:** Full MCP server implementation. Manual validation with Claude Desktop/MCP Inspector complete.
 
 ### Phase 3: Search & Graph
 
@@ -976,19 +982,6 @@ medulla add decision "Use Postgres" --edit  # Opens $EDITOR with template
 
 ---
 
-## Out of Scope (Initial Release)
-
-The following features are explicitly excluded from the initial release:
-
-- Encryption at rest
-- GitHub Issues sync
-- Multi-repo federation
-- Team permissions/roles
-- Plugin system
-- MCP Prompts (templates)
-
----
-
 ## Competitive Analysis
 
 | Tool | Medulla Advantage |
@@ -1023,7 +1016,9 @@ Before implementation begins, the following areas need design decisions or furth
 4. ~~**Vertical slice**: Implement `init` + `add decision` + `list` end-to-end to prove the CRDT layer works.~~ ✓ Complete — CLI working with Loro CRDT storage.
 5. ~~**Complete Phase 1**: Add remaining entity types, relations, update/delete commands, SQLite cache.~~ ✓ Complete — All 6 entity types implemented with full CLI support.
 6. **Validation**: Test git merge behavior with decisions on different branches.
-7. **Phase 2**: Implement MCP server — see [docs/plans/2025-01-31-phase2-mcp-server-design.md](plans/2025-01-31-phase2-mcp-server-design.md).
+7. ~~**Phase 2**: Implement MCP server — see [docs/plans/2025-01-31-phase2-mcp-server-design.md](plans/2025-01-31-phase2-mcp-server-design.md).~~ ✓ Complete
+8. **Phase 2 Manual Validation**:~~ Test MCP server with Claude Desktop and MCP Inspector — see [docs/testing/manual-mcp-testing.md](testing/manual-mcp-testing.md).~~  ✓ Complete
+9. **Phase 3**: Implement semantic search and search filters.
 
 ### Open Design Questions ✓ All Resolved
 
@@ -1073,8 +1068,8 @@ These can be decided during implementation, not upfront:
 
 Before moving to each phase, validate:
 
-1. **After Phase 1**: Can two branches with different decisions merge cleanly via git?
-2. **After Phase 2**: Can Claude Desktop query and create decisions via MCP?
+1. **After Phase 1**: Can two branches with different decisions merge cleanly via git? ✓ Yes
+2. **After Phase 2**: Can Claude Desktop query and create decisions via MCP? (Manual testing pending)
 3. **After Phase 3**: Does semantic search return relevant results? Are embeddings computed within ~200ms?
 4. **After Phase 4**: Is the snapshot readable on GitHub without any tooling?
 5. **After Phase 5**: Can users install via Homebrew and `cargo install`?

@@ -109,6 +109,9 @@ pub enum Commands {
 
     /// Start the MCP server
     Serve,
+
+    /// Manage relations between entities
+    Relation(RelationCommand),
 }
 
 #[derive(Args, Debug)]
@@ -142,6 +145,59 @@ pub enum TasksAction {
         /// Task ID to show blockers for (optional, shows all blocked tasks if omitted)
         #[arg(value_name = "ID")]
         id: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct RelationCommand {
+    #[command(subcommand)]
+    pub action: RelationAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RelationAction {
+    /// Add a relation between two entities
+    Add {
+        /// Source entity ID (sequence number like "3" or UUID prefix like "a1b2c")
+        source_id: String,
+
+        /// Target entity ID (sequence number like "3" or UUID prefix like "a1b2c")
+        target_id: String,
+
+        /// Relation type (implements, blocks, supersedes, references, belongs_to, documents)
+        #[arg(long = "type", short = 't')]
+        relation_type: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Delete a relation between two entities
+    Delete {
+        /// Source entity ID (sequence number like "3" or UUID prefix like "a1b2c")
+        source_id: String,
+
+        /// Target entity ID (sequence number like "3" or UUID prefix like "a1b2c")
+        target_id: String,
+
+        /// Relation type (implements, blocks, supersedes, references, belongs_to, documents)
+        #[arg(long = "type", short = 't')]
+        relation_type: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List relations for an entity
+    List {
+        /// Entity ID (sequence number like "3" or UUID prefix like "a1b2c")
+        entity_id: String,
 
         /// Output as JSON
         #[arg(long)]

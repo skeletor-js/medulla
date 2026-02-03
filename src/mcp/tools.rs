@@ -214,6 +214,28 @@ pub struct DecisionSupersedeParams {
     pub new_id: String,
 }
 
+/// Parameters for relation_create tool
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RelationCreateParams {
+    /// Source entity ID (sequence number or UUID prefix)
+    pub source_id: String,
+    /// Target entity ID (sequence number or UUID prefix)
+    pub target_id: String,
+    /// Relation type: implements, blocks, supersedes, references, belongs_to, documents
+    pub relation_type: String,
+}
+
+/// Parameters for relation_delete tool
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RelationDeleteParams {
+    /// Source entity ID (sequence number or UUID prefix)
+    pub source_id: String,
+    /// Target entity ID (sequence number or UUID prefix)
+    pub target_id: String,
+    /// Relation type: implements, blocks, supersedes, references, belongs_to, documents
+    pub relation_type: String,
+}
+
 /// A serializable entity response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityResponse {

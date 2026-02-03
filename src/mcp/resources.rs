@@ -18,26 +18,26 @@ pub const MEDULLA_SCHEME: &str = "medulla://";
 /// MIME type for all resource responses.
 pub const RESOURCE_MIME_TYPE: &str = "application/json";
 
-/// Static resource URIs.
+/// Static resource URIs (directly readable without parameters).
 pub mod static_resources {
     pub const SCHEMA: &str = "medulla://schema";
     pub const STATS: &str = "medulla://stats";
-}
-
-/// Resource template URI patterns.
-pub mod resource_templates {
     pub const ENTITIES: &str = "medulla://entities";
-    pub const ENTITIES_BY_TYPE: &str = "medulla://entities/{type}";
-    pub const ENTITY_BY_ID: &str = "medulla://entity/{id}";
     pub const DECISIONS: &str = "medulla://decisions";
-    pub const DECISIONS_ACTIVE: &str = "medulla://decisions/active";
     pub const TASKS: &str = "medulla://tasks";
-    pub const TASKS_ACTIVE: &str = "medulla://tasks/active";
     pub const TASKS_READY: &str = "medulla://tasks/ready";
     pub const TASKS_BLOCKED: &str = "medulla://tasks/blocked";
-    pub const TASKS_DUE: &str = "medulla://tasks/due/{date}";
     pub const PROMPTS: &str = "medulla://prompts";
     pub const GRAPH: &str = "medulla://graph";
+}
+
+/// Resource template URI patterns (require parameter substitution).
+pub mod resource_templates {
+    pub const ENTITIES_BY_TYPE: &str = "medulla://entities/{type}";
+    pub const ENTITY_BY_ID: &str = "medulla://entity/{id}";
+    pub const DECISIONS_ACTIVE: &str = "medulla://decisions/active";
+    pub const TASKS_ACTIVE: &str = "medulla://tasks/active";
+    pub const TASKS_DUE: &str = "medulla://tasks/due/{date}";
 }
 
 /// Build the list of static resources.
@@ -63,20 +63,82 @@ pub fn build_static_resources() -> Vec<RawResource> {
             icons: None,
             meta: None,
         },
+        RawResource {
+            uri: static_resources::ENTITIES.to_string(),
+            name: "All Entities".to_string(),
+            title: Some("All Entities".to_string()),
+            description: Some("List all entities across all types".to_string()),
+            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
+            size: None,
+            icons: None,
+            meta: None,
+        },
+        RawResource {
+            uri: static_resources::DECISIONS.to_string(),
+            name: "Decisions".to_string(),
+            title: Some("All Decisions".to_string()),
+            description: Some("List all decisions".to_string()),
+            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
+            size: None,
+            icons: None,
+            meta: None,
+        },
+        RawResource {
+            uri: static_resources::TASKS.to_string(),
+            name: "Tasks".to_string(),
+            title: Some("All Tasks".to_string()),
+            description: Some("List all tasks".to_string()),
+            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
+            size: None,
+            icons: None,
+            meta: None,
+        },
+        RawResource {
+            uri: static_resources::TASKS_READY.to_string(),
+            name: "Ready Tasks".to_string(),
+            title: Some("Ready Tasks".to_string()),
+            description: Some("Tasks with no unresolved blockers".to_string()),
+            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
+            size: None,
+            icons: None,
+            meta: None,
+        },
+        RawResource {
+            uri: static_resources::TASKS_BLOCKED.to_string(),
+            name: "Blocked Tasks".to_string(),
+            title: Some("Blocked Tasks".to_string()),
+            description: Some("Tasks with unresolved blockers".to_string()),
+            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
+            size: None,
+            icons: None,
+            meta: None,
+        },
+        RawResource {
+            uri: static_resources::PROMPTS.to_string(),
+            name: "Prompts".to_string(),
+            title: Some("All Prompts".to_string()),
+            description: Some("List all prompts".to_string()),
+            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
+            size: None,
+            icons: None,
+            meta: None,
+        },
+        RawResource {
+            uri: static_resources::GRAPH.to_string(),
+            name: "Knowledge Graph".to_string(),
+            title: Some("Full Knowledge Graph".to_string()),
+            description: Some("All entities and relations".to_string()),
+            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
+            size: None,
+            icons: None,
+            meta: None,
+        },
     ]
 }
 
 /// Build the list of resource templates (dynamic resources with URI parameters).
 pub fn build_resource_templates() -> Vec<RawResourceTemplate> {
     vec![
-        RawResourceTemplate {
-            uri_template: resource_templates::ENTITIES.to_string(),
-            name: "All Entities".to_string(),
-            title: Some("All Entities".to_string()),
-            description: Some("List all entities across all types".to_string()),
-            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
-            icons: None,
-        },
         RawResourceTemplate {
             uri_template: resource_templates::ENTITIES_BY_TYPE.to_string(),
             name: "Entities by Type".to_string(),
@@ -94,26 +156,10 @@ pub fn build_resource_templates() -> Vec<RawResourceTemplate> {
             icons: None,
         },
         RawResourceTemplate {
-            uri_template: resource_templates::DECISIONS.to_string(),
-            name: "Decisions".to_string(),
-            title: Some("All Decisions".to_string()),
-            description: Some("List all decisions".to_string()),
-            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
-            icons: None,
-        },
-        RawResourceTemplate {
             uri_template: resource_templates::DECISIONS_ACTIVE.to_string(),
             name: "Active Decisions".to_string(),
             title: Some("Active Decisions".to_string()),
             description: Some("Non-superseded decisions".to_string()),
-            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
-            icons: None,
-        },
-        RawResourceTemplate {
-            uri_template: resource_templates::TASKS.to_string(),
-            name: "Tasks".to_string(),
-            title: Some("All Tasks".to_string()),
-            description: Some("List all tasks".to_string()),
             mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
             icons: None,
         },
@@ -126,42 +172,10 @@ pub fn build_resource_templates() -> Vec<RawResourceTemplate> {
             icons: None,
         },
         RawResourceTemplate {
-            uri_template: resource_templates::TASKS_READY.to_string(),
-            name: "Ready Tasks".to_string(),
-            title: Some("Ready Tasks".to_string()),
-            description: Some("Tasks with no unresolved blockers".to_string()),
-            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
-            icons: None,
-        },
-        RawResourceTemplate {
-            uri_template: resource_templates::TASKS_BLOCKED.to_string(),
-            name: "Blocked Tasks".to_string(),
-            title: Some("Blocked Tasks".to_string()),
-            description: Some("Tasks with unresolved blockers".to_string()),
-            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
-            icons: None,
-        },
-        RawResourceTemplate {
             uri_template: resource_templates::TASKS_DUE.to_string(),
             name: "Tasks Due".to_string(),
             title: Some("Tasks Due on Date".to_string()),
             description: Some("Tasks due on a specific date".to_string()),
-            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
-            icons: None,
-        },
-        RawResourceTemplate {
-            uri_template: resource_templates::PROMPTS.to_string(),
-            name: "Prompts".to_string(),
-            title: Some("All Prompts".to_string()),
-            description: Some("List all prompts".to_string()),
-            mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
-            icons: None,
-        },
-        RawResourceTemplate {
-            uri_template: resource_templates::GRAPH.to_string(),
-            name: "Knowledge Graph".to_string(),
-            title: Some("Full Knowledge Graph".to_string()),
-            description: Some("All entities and relations".to_string()),
             mime_type: Some(RESOURCE_MIME_TYPE.to_string()),
             icons: None,
         },
@@ -882,24 +896,37 @@ mod tests {
     #[test]
     fn test_build_static_resources() {
         let resources = build_static_resources();
-        assert_eq!(resources.len(), 2);
+        assert_eq!(resources.len(), 9);
         assert!(resources.iter().any(|r| r.uri == "medulla://schema"));
         assert!(resources.iter().any(|r| r.uri == "medulla://stats"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://entities"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://decisions"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://tasks"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://tasks/ready"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://tasks/blocked"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://prompts"));
+        assert!(resources.iter().any(|r| r.uri == "medulla://graph"));
     }
 
     #[test]
     fn test_build_resource_templates() {
         let templates = build_resource_templates();
-        assert!(!templates.is_empty());
+        assert_eq!(templates.len(), 5);
         assert!(templates
             .iter()
-            .any(|t| t.uri_template == "medulla://entities"));
+            .any(|t| t.uri_template == "medulla://entities/{type}"));
         assert!(templates
             .iter()
-            .any(|t| t.uri_template == "medulla://tasks/ready"));
+            .any(|t| t.uri_template == "medulla://entity/{id}"));
         assert!(templates
             .iter()
-            .any(|t| t.uri_template == "medulla://graph"));
+            .any(|t| t.uri_template == "medulla://decisions/active"));
+        assert!(templates
+            .iter()
+            .any(|t| t.uri_template == "medulla://tasks/active"));
+        assert!(templates
+            .iter()
+            .any(|t| t.uri_template == "medulla://tasks/due/{date}"));
     }
 
     #[tokio::test]

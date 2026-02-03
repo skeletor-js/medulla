@@ -168,22 +168,35 @@ impl LoroStore {
         )
     }
 
-    /// Get the next sequence number for a given entity type
-    pub fn next_sequence_number(&self, entity_type: &str) -> u32 {
+    /// Get the next global sequence number (shared across all entity types)
+    pub fn next_sequence_number(&self) -> u32 {
         let meta = self.doc.get_map("_meta");
+
+        // Check for global sequence first
+        if let Some(ValueOrContainer::Value(LoroValue::I64(n))) = meta.get("_global_sequence") {
+            return (n as u32) + 1;
+        }
+
+        // Backward compatibility: find max of all per-type sequences
         let sequences = meta
             .get_or_create_container("type_sequences", LoroMap::new())
             .unwrap();
 
-        let current = sequences
-            .get(entity_type)
-            .and_then(|v| match v {
-                ValueOrContainer::Value(LoroValue::I64(n)) => Some(n as u32),
-                _ => None,
-            })
-            .unwrap_or(0);
+        let mut max_seq: u32 = 0;
+        for entity_type in &["decisions", "tasks", "notes", "prompts", "components", "links"] {
+            if let Some(ValueOrContainer::Value(LoroValue::I64(n))) = sequences.get(*entity_type) {
+                max_seq = max_seq.max(n as u32);
+            }
+        }
 
-        current + 1
+        max_seq + 1
+    }
+
+    /// Update the global sequence counter (called after entity creation)
+    fn update_global_sequence(&self, seq: u32) -> Result<()> {
+        let meta = self.doc.get_map("_meta");
+        meta.insert("_global_sequence", seq as i64)?;
+        Ok(())
     }
 
     /// Get a decision by UUID
@@ -351,10 +364,8 @@ impl LoroStore {
             consequences_list.push(consequence.clone())?;
         }
 
-        // Update sequence counter
-        let meta = self.doc.get_map("_meta");
-        let sequences = meta.get_or_create_container("type_sequences", LoroMap::new())?;
-        sequences.insert("decisions", decision.base.sequence_number as i64)?;
+        // Update global sequence counter
+        self.update_global_sequence(decision.base.sequence_number)?;
 
         self.doc.commit();
         Ok(())
@@ -677,10 +688,8 @@ impl LoroStore {
             tags_list.push(tag.clone())?;
         }
 
-        // Update sequence counter
-        let meta = self.doc.get_map("_meta");
-        let sequences = meta.get_or_create_container("type_sequences", LoroMap::new())?;
-        sequences.insert("tasks", task.base.sequence_number as i64)?;
+        // Update global sequence counter
+        self.update_global_sequence(task.base.sequence_number)?;
 
         self.doc.commit();
         Ok(())
@@ -954,9 +963,8 @@ impl LoroStore {
             tags_list.push(tag.clone())?;
         }
 
-        let meta = self.doc.get_map("_meta");
-        let sequences = meta.get_or_create_container("type_sequences", LoroMap::new())?;
-        sequences.insert("notes", note.base.sequence_number as i64)?;
+        // Update global sequence counter
+        self.update_global_sequence(note.base.sequence_number)?;
 
         self.doc.commit();
         Ok(())
@@ -1199,9 +1207,8 @@ impl LoroStore {
             variables_list.push(var.clone())?;
         }
 
-        let meta = self.doc.get_map("_meta");
-        let sequences = meta.get_or_create_container("type_sequences", LoroMap::new())?;
-        sequences.insert("prompts", prompt.base.sequence_number as i64)?;
+        // Update global sequence counter
+        self.update_global_sequence(prompt.base.sequence_number)?;
 
         self.doc.commit();
         Ok(())
@@ -1515,9 +1522,8 @@ impl LoroStore {
             tags_list.push(tag.clone())?;
         }
 
-        let meta = self.doc.get_map("_meta");
-        let sequences = meta.get_or_create_container("type_sequences", LoroMap::new())?;
-        sequences.insert("components", component.base.sequence_number as i64)?;
+        // Update global sequence counter
+        self.update_global_sequence(component.base.sequence_number)?;
 
         self.doc.commit();
         Ok(())
@@ -1776,9 +1782,8 @@ impl LoroStore {
             tags_list.push(tag.clone())?;
         }
 
-        let meta = self.doc.get_map("_meta");
-        let sequences = meta.get_or_create_container("type_sequences", LoroMap::new())?;
-        sequences.insert("links", link.base.sequence_number as i64)?;
+        // Update global sequence counter
+        self.update_global_sequence(link.base.sequence_number)?;
 
         self.doc.commit();
         Ok(())
